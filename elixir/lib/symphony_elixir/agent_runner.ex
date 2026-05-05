@@ -150,23 +150,38 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp maybe_inspect_session(app_session, issue, recipient, opts, turn_number) do
     if session_inspection_enabled?(opts) do
-      inspection_opts = Keyword.get(opts, :session_inspection_opts, [])
-
-      case AgentSessionInspection.summarize(SessionInspectionAdapter, app_session, issue, inspection_opts) do
-        {:ok, summary} ->
-          summary = Map.put(summary, :source_turn_number, turn_number)
-          maybe_create_session_inspection_comment(summary, issue, opts)
-          send_session_inspection_update(recipient, issue, summary)
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("Session inspection failed for #{issue_context(issue)} turn=#{turn_number}: #{inspect(reason)}")
-          send_session_inspection_update(recipient, issue, %{error: inspect(reason), source_turn_number: turn_number})
-          :ok
-      end
+      do_inspect_session(app_session, issue, recipient, opts, turn_number)
     else
       :ok
     end
+  end
+
+  defp do_inspect_session(app_session, issue, recipient, opts, turn_number) do
+    inspection_opts = Keyword.get(opts, :session_inspection_opts, [])
+
+    case AgentSessionInspection.summarize(SessionInspectionAdapter, app_session, issue, inspection_opts) do
+      {:ok, summary} ->
+        summary = Map.put(summary, :source_turn_number, turn_number)
+        summary = maybe_create_session_inspection_comment(summary, issue, opts)
+        send_session_inspection_update(recipient, issue, summary)
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Session inspection failed for #{issue_context(issue)} turn=#{turn_number}: #{inspect(reason)}")
+        send_session_inspection_update(recipient, issue, %{error: inspect(reason), source_turn_number: turn_number})
+        :ok
+    end
+  rescue
+    exception ->
+      reason = {exception.__struct__, Exception.message(exception)}
+      Logger.warning("Session inspection raised for #{issue_context(issue)} turn=#{turn_number}: #{inspect(reason)}")
+      send_session_inspection_update(recipient, issue, %{error: inspect(reason), source_turn_number: turn_number})
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning("Session inspection exited for #{issue_context(issue)} turn=#{turn_number}: #{inspect({kind, reason})}")
+      send_session_inspection_update(recipient, issue, %{error: inspect({kind, reason}), source_turn_number: turn_number})
+      :ok
   end
 
   defp session_inspection_enabled?(opts) do
@@ -182,16 +197,32 @@ defmodule SymphonyElixir.AgentRunner do
       )
 
     if comment? and is_binary(issue.id) do
-      case AgentSessionInspection.create_comment(summary, issue.id) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("Session inspection comment failed for #{issue_context(issue)}: #{inspect(reason)}")
-      end
+      create_session_inspection_comment(summary, issue)
     else
-      :ok
+      Map.put_new(summary, :comment_status, :disabled)
     end
+  end
+
+  defp create_session_inspection_comment(summary, issue) do
+    case AgentSessionInspection.create_comment(summary, issue.id) do
+      {:ok, comment_id} ->
+        summary
+        |> Map.put(:comment_status, :created)
+        |> Map.put(:comment_id, comment_id)
+
+      {:error, reason} ->
+        Logger.warning("Session inspection comment failed for #{issue_context(issue)}: #{inspect(reason)}")
+        summary |> Map.put(:comment_status, :failed) |> Map.put(:comment_error, inspect(reason))
+    end
+  rescue
+    exception ->
+      reason = {exception.__struct__, Exception.message(exception)}
+      Logger.warning("Session inspection comment raised for #{issue_context(issue)}: #{inspect(reason)}")
+      summary |> Map.put(:comment_status, :failed) |> Map.put(:comment_error, inspect(reason))
+  catch
+    kind, reason ->
+      Logger.warning("Session inspection comment exited for #{issue_context(issue)}: #{inspect({kind, reason})}")
+      summary |> Map.put(:comment_status, :failed) |> Map.put(:comment_error, inspect({kind, reason}))
   end
 
   defp send_session_inspection_update(recipient, %Issue{id: issue_id}, summary)

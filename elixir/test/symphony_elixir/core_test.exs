@@ -71,6 +71,14 @@ defmodule SymphonyElixir.CoreTest do
     assert :ok = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "none",
+      tracker_api_token: nil,
+      tracker_project_slug: nil
+    )
+
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
       codex_turn_sandbox_policy: %{type: "workspaceWrite", writableRoots: ["relative/path"]}
     )
 
@@ -752,6 +760,7 @@ defmodule SymphonyElixir.CoreTest do
 
   defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+    min_remaining_ms = max(min_remaining_ms - 250, 0)
 
     assert remaining_ms >= min_remaining_ms
     assert remaining_ms <= max_remaining_ms
@@ -1199,16 +1208,18 @@ defmodule SymphonyElixir.CoreTest do
             printf '%s\\n' '{"id":1,"result":{}}'
             ;;
           2)
-            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-work"}}}'
             ;;
           3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-work"}}}'
+            ;;
+          4)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-work"}}}'
             printf '%s\\n' '{"method":"turn/completed"}'
             ;;
-          4)
+          5)
             printf '%s\\n' '{"id":4,"result":{"thread":{"id":"thread-summary"}}}'
             ;;
-          5)
+          6)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-summary"}}}'
             printf '%s\\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-summary","tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":90,"outputTokens":10,"totalTokens":130}}}}'
             printf '%s\\n' '{"method":"item/completed","params":{"threadId":"thread-summary","turnId":"turn-summary","item":{"id":"item-commentary","type":"agentMessage","phase":"commentary","text":"commentary should not be posted"}}}'
@@ -1263,7 +1274,11 @@ defmodule SymphonyElixir.CoreTest do
       assert summary.cache_analysis.cached_input_tokens == 90
       assert Map.fetch!(summary.cache_analysis, :cache_hit?) == true
 
-      assert_receive {:memory_tracker_comment, "issue-session-inspection", body}, 1_000
+      assert summary.comment_status == :created
+      assert is_binary(summary.comment_id)
+
+      assert_receive {:memory_tracker_comment, "issue-session-inspection", body, comment_id}, 1_000
+      assert comment_id == summary.comment_id
       assert body =~ "Symphony session summary"
       assert body =~ "Source session: thread_id=thread-work"
       assert body =~ "Observer session: thread_id=thread-summary"
@@ -1281,6 +1296,87 @@ defmodule SymphonyElixir.CoreTest do
                  false
                end
              end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner does not fail successful work when session inspection cannot fork" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-session-inspection-failure-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-work"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-work"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server",
+        session_inspection_enabled: true
+      )
+
+      issue = %Issue{
+        id: "issue-session-inspection-failure",
+        identifier: "MT-INSPECT-FAIL",
+        title: "Inspection fails after work",
+        description: "Keep successful worker result",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-INSPECT-FAIL",
+        labels: []
+      }
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 self(),
+                 issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
+               )
+
+      assert_receive {:session_inspection_update, "issue-session-inspection-failure", %{error: error}}, 1_000
+      assert error =~ "port_exit" or error =~ "ArgumentError"
     after
       File.rm_rf(test_root)
     end

@@ -22,7 +22,14 @@ defmodule SymphonyElixir.Codex.SessionInspectionAdapter do
 
   @impl true
   def clone_session(app_session, opts) do
-    AppServer.fork_session(app_session, opts)
+    AppServer.fork_session(app_session, observer_session_opts(opts))
+  end
+
+  defp observer_session_opts(opts) do
+    opts
+    |> Keyword.put_new(:approval_policy, "on-request")
+    |> Keyword.put_new(:thread_sandbox, "read-only")
+    |> Keyword.put_new(:turn_sandbox_policy, %{"type" => "readOnly", "networkAccess" => false})
   end
 
   @impl true
@@ -78,14 +85,7 @@ defmodule SymphonyElixir.Codex.SessionInspectionAdapter do
       %{"type" => "agentMessage", "text" => text} = item when is_binary(text) ->
         [{Map.get(item, "phase"), text}]
 
-      _ ->
-        []
-    end
-  end
-
-  defp agent_message_candidates(%{payload: %{"params" => %{"item" => item}}}) do
-    case item do
-      %{"type" => "agentMessage", "text" => text} = item when is_binary(text) ->
+      %{"type" => "agent_message", "text" => text} = item when is_binary(text) ->
         [{Map.get(item, "phase"), text}]
 
       _ ->
@@ -93,7 +93,60 @@ defmodule SymphonyElixir.Codex.SessionInspectionAdapter do
     end
   end
 
+  defp agent_message_candidates(%{payload: %{"method" => "codex/event/agent_message", "params" => %{"msg" => msg}}}) do
+    agent_message_from_msg(msg)
+  end
+
+  defp agent_message_candidates(%{
+         payload: %{"method" => "codex/event/task_complete", "params" => %{"msg" => %{"last_agent_message" => text}}}
+       })
+       when is_binary(text) do
+    [{"final_answer", text}]
+  end
+
+  defp agent_message_candidates(%{payload: %{"params" => %{"item" => item}}}) do
+    case item do
+      %{"type" => "agentMessage", "text" => text} = item when is_binary(text) ->
+        [{Map.get(item, "phase"), text}]
+
+      %{"type" => "agent_message", "text" => text} = item when is_binary(text) ->
+        [{Map.get(item, "phase"), text}]
+
+      %{"type" => type, "content" => content, "phase" => phase}
+      when type in ["assistantMessage", "assistant_message", "agentMessage", "agent_message"] ->
+        content
+        |> content_text()
+        |> maybe_agent_message(phase)
+
+      _ ->
+        []
+    end
+  end
+
   defp agent_message_candidates(_event), do: []
+
+  defp agent_message_from_msg(%{"message" => text, "phase" => phase}) when is_binary(text), do: [{phase, text}]
+  defp agent_message_from_msg(%{"text" => text, "phase" => phase}) when is_binary(text), do: [{phase, text}]
+  defp agent_message_from_msg(%{"message" => text}) when is_binary(text), do: [{nil, text}]
+  defp agent_message_from_msg(%{"text" => text}) when is_binary(text), do: [{nil, text}]
+  defp agent_message_from_msg(_msg), do: []
+
+  defp content_text(content) when is_list(content) do
+    content
+    |> Enum.map(fn
+      %{"text" => text} when is_binary(text) -> text
+      %{"type" => "output_text", "text" => text} when is_binary(text) -> text
+      %{"type" => "text", "text" => text} when is_binary(text) -> text
+      _ -> ""
+    end)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n")
+  end
+
+  defp content_text(_content), do: ""
+
+  defp maybe_agent_message("", _phase), do: []
+  defp maybe_agent_message(text, phase), do: [{phase, text}]
 
   defp prefer_final_answer(candidates) do
     candidates

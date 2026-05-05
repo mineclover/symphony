@@ -83,10 +83,16 @@ defmodule SymphonyElixir.AgentSessionInspection do
     |> String.trim()
   end
 
-  @spec create_comment(summary(), String.t(), keyword()) :: :ok | {:error, term()}
+  @spec create_comment(summary(), String.t(), keyword()) :: {:ok, String.t() | nil} | {:error, term()}
   def create_comment(summary, issue_id, opts \\ []) when is_map(summary) and is_binary(issue_id) do
     tracker = Keyword.get(opts, :tracker, SymphonyElixir.Tracker)
-    tracker.create_comment(issue_id, comment_body(summary))
+
+    case tracker.create_comment(issue_id, comment_body(summary)) do
+      :ok -> {:ok, nil}
+      {:ok, comment_id} -> {:ok, comment_id}
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_comment_result, other}}
+    end
   end
 
   @spec cache_analysis([map()]) :: map()

@@ -76,6 +76,253 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server treats failed turn/completed payloads as turn failures" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-failed-completed-turn-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-FAILED")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+
+      while IFS= read -r _line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-failed"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-failed"}}}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"threadId":"thread-failed","turn":{"id":"turn-failed","status":"failed","error":{"message":"model unavailable"}}}}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-failed-completed-turn",
+        identifier: "MT-FAILED",
+        title: "Failed completed turn",
+        description: "Validate failed turn/completed handling",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-FAILED",
+        labels: []
+      }
+
+      assert {:error, {:turn_failed, %{"message" => "model unavailable"}}} =
+               AppServer.run(workspace, "Summarize", issue)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server can fork a thread from a rollout path with model metadata" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-fork-path-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-FORK")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-fork-path.trace")
+      rollout_path = Path.join(test_root, "rollout-source.jsonl")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn -> restore_env("SYMP_TEST_CODEx_TRACE", previous_trace) end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+      File.write!(rollout_path, "")
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-fork-path.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-bootstrap"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":4,"result":{"thread":{"id":"thread-forked"}}}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      assert {:ok, session} = AppServer.start_session(workspace)
+
+      try do
+        assert {:ok, forked_session} =
+                 AppServer.fork_session(session,
+                   path: rollout_path,
+                   model: "gpt-5.4",
+                   model_provider: "openai",
+                   approval_policy: "on-request",
+                   thread_sandbox: "read-only"
+                 )
+
+        assert forked_session.thread_id == "thread-forked"
+      after
+        AppServer.stop_session(session)
+      end
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 payload = line |> String.trim_leading("JSON:") |> Jason.decode!()
+
+                 payload["method"] == "thread/fork" &&
+                   get_in(payload, ["params", "threadId"]) == "thread-bootstrap" &&
+                   get_in(payload, ["params", "path"]) == rollout_path &&
+                   get_in(payload, ["params", "model"]) == "gpt-5.4" &&
+                   get_in(payload, ["params", "modelProvider"]) == "openai" &&
+                   get_in(payload, ["params", "approvalPolicy"]) == "on-request" &&
+                   get_in(payload, ["params", "sandbox"]) == "read-only"
+               else
+                 false
+               end
+             end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "default codex app-server command resolves the local executable before login shell launch" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-default-codex-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-CODEX")
+      bin_dir = Path.join(test_root, "bin")
+      codex_binary = Path.join(bin_dir, "codex")
+      trace_file = Path.join(test_root, "codex-default-command.trace")
+      previous_path = System.get_env("PATH")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        restore_env("PATH", previous_path)
+        restore_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+      end)
+
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(bin_dir)
+      System.put_env("PATH", "#{bin_dir}:#{previous_path}")
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-default-command.trace}"
+      count=0
+      printf 'SELF:%s\\n' "$0" >> "$trace_file"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-default-codex"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-default-codex"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "codex app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-default-codex",
+        identifier: "MT-CODEX",
+        title: "Validate default codex command",
+        description: "Check default command resolution",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CODEX",
+        labels: []
+      }
+
+      assert {:ok, _turn} = AppServer.run(workspace, "Run default codex", issue)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "SELF:#{codex_binary}"
+      assert trace =~ "ARGV:app-server"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server passes explicit turn sandbox policies through unchanged" do
     test_root =
       Path.join(

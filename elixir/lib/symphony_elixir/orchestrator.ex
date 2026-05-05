@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, SessionInspectionStore, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -37,9 +37,9 @@ defmodule SymphonyElixir.Orchestrator do
       completed: MapSet.new(),
       claimed: MapSet.new(),
       retry_attempts: %{},
-      session_inspections: %{},
       codex_totals: nil,
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      session_inspections: %{}
     ]
   end
 
@@ -62,7 +62,8 @@ defmodule SymphonyElixir.Orchestrator do
       tick_timer_ref: nil,
       tick_token: nil,
       codex_totals: @empty_codex_totals,
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      session_inspections: SessionInspectionStore.load()
     }
 
     run_terminal_workspace_cleanup()
@@ -221,7 +222,7 @@ defmodule SymphonyElixir.Orchestrator do
     state = %{
       state
       | running: running,
-        session_inspections: Map.put(session_inspections, issue_id, enriched_summary)
+        session_inspections: store_session_inspection(session_inspections, issue_id, enriched_summary)
     }
 
     notify_dashboard()
@@ -243,6 +244,24 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info(msg, state) do
     Logger.debug("Orchestrator ignored message: #{inspect(msg)}")
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast(
+        {:ingest_session_inspection, issue_id, summary},
+        %{running: running, session_inspections: session_inspections} = state
+      )
+      when is_binary(issue_id) and is_map(summary) do
+    running_entry = Map.get(running, issue_id)
+    enriched_summary = enrich_session_inspection_summary(summary, issue_id, running_entry)
+
+    state = %{
+      state
+      | session_inspections: store_session_inspection(session_inspections, issue_id, enriched_summary)
+    }
+
+    notify_dashboard()
     {:noreply, state}
   end
 
@@ -1105,6 +1124,16 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @spec ingest_session_inspection(GenServer.server(), String.t(), map()) :: :ok | :unavailable
+  def ingest_session_inspection(server, issue_id, summary)
+      when is_binary(issue_id) and is_map(summary) do
+    if Process.whereis(server) do
+      GenServer.cast(server, {:ingest_session_inspection, issue_id, summary})
+    else
+      :unavailable
+    end
+  end
+
   @spec snapshot() :: map() | :timeout | :unavailable
   def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -1273,10 +1302,12 @@ defmodule SymphonyElixir.Orchestrator do
   defp session_inspections_snapshot(session_inspections) when is_map(session_inspections) do
     session_inspections
     |> Map.values()
+    |> List.flatten()
     |> Enum.sort_by(
       fn summary ->
-        case Map.get(summary, :updated_at) do
+        case map_get(summary, :updated_at) do
           %DateTime{} = updated_at -> DateTime.to_unix(updated_at, :microsecond)
+          updated_at when is_binary(updated_at) -> unix_microsecond(updated_at)
           _ -> 0
         end
       end,
@@ -1284,13 +1315,61 @@ defmodule SymphonyElixir.Orchestrator do
     )
   end
 
+  defp store_session_inspection(session_inspections, issue_id, summary) do
+    case SessionInspectionStore.append(summary) do
+      {:ok, _persisted_summary} ->
+        Map.update(session_inspections, issue_id, [summary], &put_session_inspection(List.wrap(&1), summary))
+
+      {:error, reason} ->
+        Logger.warning("Session inspection persistence failed for issue_id=#{issue_id}: #{inspect(reason)}")
+        Map.update(session_inspections, issue_id, [summary], &put_session_inspection(List.wrap(&1), summary))
+    end
+  end
+
+  defp put_session_inspection(history, summary) do
+    case session_inspection_key(summary) do
+      key when is_binary(key) ->
+        [summary | Enum.reject(history, &(session_inspection_key(&1) == key))]
+
+      _ ->
+        [summary | history]
+    end
+  end
+
+  defp session_inspection_key(summary) do
+    case {map_get(summary, :platform), map_get(map_get(summary, :source_session) || %{}, :id)} do
+      {platform, source_session_id} when not is_nil(platform) and is_binary(source_session_id) ->
+        "external-session:#{platform}:#{source_session_id}"
+
+      _ ->
+        map_get(summary, :inspection_id)
+    end
+  end
+
   defp enrich_session_inspection_summary(summary, issue_id, running_entry) do
     now = DateTime.utc_now()
 
     summary
     |> Map.put(:issue_id, issue_id)
-    |> Map.put(:issue_identifier, running_entry && Map.get(running_entry, :identifier))
+    |> maybe_put_issue_identifier(running_entry)
     |> Map.put_new(:updated_at, now)
+  end
+
+  defp maybe_put_issue_identifier(summary, nil), do: Map.put_new(summary, :issue_identifier, nil)
+  defp maybe_put_issue_identifier(summary, running_entry), do: Map.put(summary, :issue_identifier, Map.get(running_entry, :identifier))
+
+  defp unix_microsecond(datetime) do
+    case DateTime.from_iso8601(datetime) do
+      {:ok, parsed, _offset} -> DateTime.to_unix(parsed, :microsecond)
+      _ -> 0
+    end
+  end
+
+  defp map_get(map, key) when is_map(map) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
   end
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do

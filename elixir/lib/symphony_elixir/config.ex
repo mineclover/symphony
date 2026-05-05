@@ -106,9 +106,9 @@ defmodule SymphonyElixir.Config do
              Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
         {:ok,
          %{
-           approval_policy: settings.codex.approval_policy,
-           thread_sandbox: settings.codex.thread_sandbox,
-           turn_sandbox_policy: turn_sandbox_policy
+           approval_policy: Keyword.get(opts, :approval_policy, settings.codex.approval_policy),
+           thread_sandbox: Keyword.get(opts, :thread_sandbox, settings.codex.thread_sandbox),
+           turn_sandbox_policy: Keyword.get(opts, :turn_sandbox_policy, turn_sandbox_policy)
          }}
       end
     end
@@ -119,7 +119,7 @@ defmodule SymphonyElixir.Config do
       is_nil(settings.tracker.kind) ->
         {:error, :missing_tracker_kind}
 
-      settings.tracker.kind not in ["linear", "memory"] ->
+      settings.tracker.kind not in ["linear", "memory", "none"] ->
         {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
 
       settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->

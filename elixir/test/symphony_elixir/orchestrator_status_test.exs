@@ -103,6 +103,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "orchestrator snapshot stores session inspection summaries" do
     issue_id = "issue-inspection-snapshot"
+    store_file = Path.join(System.tmp_dir!(), "symphony-inspections-#{System.unique_integer([:positive])}.jsonl")
+    Application.put_env(:symphony_elixir, :session_inspection_store_file, store_file)
+
+    on_exit(fn ->
+      Application.delete_env(:symphony_elixir, :session_inspection_store_file)
+      File.rm(store_file)
+    end)
 
     issue = %Issue{
       id: issue_id,
@@ -143,7 +150,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
     end)
 
-    summary = %{
+    first_updated_at = DateTime.utc_now()
+    second_updated_at = DateTime.add(first_updated_at, 1, :second)
+
+    first_summary = %{
       observer: true,
       platform: :codex_app_server,
       source_turn_number: 1,
@@ -152,21 +162,44 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       observer_turn: %{session_id: "thread-summary-turn-summary", thread_id: "thread-summary", turn_id: "turn-summary"},
       summary_text: "outcome: observer summary",
       cache_analysis: %{cache_hit?: true, cached_input_tokens: 90, input_tokens: 120, cache_hit_ratio: 0.75},
-      events: []
+      events: [],
+      updated_at: first_updated_at
     }
 
-    send(pid, {:session_inspection_update, issue_id, summary})
+    second_summary = %{
+      first_summary
+      | source_turn_number: 2,
+        observer_session: %{thread_id: "thread-summary-2"},
+        observer_turn: %{session_id: "thread-summary-turn-summary-2", thread_id: "thread-summary-2", turn_id: "turn-summary-2"},
+        summary_text: "outcome: observer summary 2",
+        updated_at: second_updated_at
+    }
+
+    send(pid, {:session_inspection_update, issue_id, first_summary})
+    send(pid, {:session_inspection_update, issue_id, second_summary})
 
     snapshot = GenServer.call(pid, :snapshot)
-    assert %{running: [snapshot_entry], session_inspections: [inspection]} = snapshot
+    assert %{running: [snapshot_entry]} = snapshot
 
-    assert snapshot_entry.session_inspection.summary_text == "outcome: observer summary"
-    assert inspection.issue_id == issue_id
-    assert inspection.issue_identifier == issue.identifier
-    assert inspection.observer == true
-    assert inspection.observer_turn.session_id == "thread-summary-turn-summary"
-    assert Map.fetch!(inspection.cache_analysis, :cache_hit?) == true
-    assert %DateTime{} = inspection.updated_at
+    [latest_inspection, first_inspection] =
+      Enum.filter(snapshot.session_inspections, fn inspection ->
+        Map.get(inspection, :issue_id) == issue_id and Map.get(inspection, :platform) == :codex_app_server
+      end)
+
+    assert snapshot_entry.session_inspection.summary_text == "outcome: observer summary 2"
+    assert latest_inspection.source_turn_number == 2
+    assert first_inspection.source_turn_number == 1
+    assert first_inspection.issue_id == issue_id
+    assert first_inspection.issue_identifier == issue.identifier
+    assert first_inspection.observer == true
+    assert first_inspection.observer_turn.session_id == "thread-summary-turn-summary"
+    assert Map.fetch!(first_inspection.cache_analysis, :cache_hit?) == true
+    assert %DateTime{} = first_inspection.updated_at
+
+    histories = SymphonyElixir.SessionInspectionStore.load()
+    assert [stored_first, stored_second] = Map.fetch!(histories, issue_id)
+    assert stored_first["summary_text"] == "outcome: observer summary"
+    assert stored_second["summary_text"] == "outcome: observer summary 2"
   end
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do

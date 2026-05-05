@@ -1169,6 +1169,41 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "runtime codex settings accept per-session policy overrides" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-runtime-policy-overrides-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      issue_workspace = Path.join(workspace_root, "MT-OVERRIDE")
+      turn_sandbox_policy = %{"type" => "readOnly", "networkAccess" => false}
+
+      File.mkdir_p!(issue_workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_approval_policy: %{reject: %{sandbox_approval: true}},
+        codex_thread_sandbox: "workspace-write"
+      )
+
+      assert {:ok, runtime_settings} =
+               Config.codex_runtime_settings(issue_workspace,
+                 approval_policy: "on-request",
+                 thread_sandbox: "read-only",
+                 turn_sandbox_policy: turn_sandbox_policy
+               )
+
+      assert runtime_settings.approval_policy == "on-request"
+      assert runtime_settings.thread_sandbox == "read-only"
+      assert runtime_settings.turn_sandbox_policy == turn_sandbox_policy
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "path safety returns errors for invalid path segments" do
     invalid_segment = String.duplicate("a", 300)
     path = Path.join(System.tmp_dir!(), invalid_segment)

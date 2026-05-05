@@ -25,6 +25,7 @@ defmodule SymphonyElixirWeb.Router do
     pipe_through(:browser)
 
     live("/", DashboardLive, :index)
+    live("/sessions", SessionViewerLive, :index)
   end
 
   scope "/", SymphonyElixirWeb do
@@ -34,6 +35,8 @@ defmodule SymphonyElixirWeb.Router do
     match(:*, "/api/v1/state", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/refresh", ObservabilityApiController, :refresh)
     match(:*, "/api/v1/refresh", ObservabilityApiController, :method_not_allowed)
+    post("/api/v1/session-inspections", ObservabilityApiController, :ingest_session_inspection)
+    match(:*, "/api/v1/session-inspections", ObservabilityApiController, :method_not_allowed)
     get("/api/v1/:issue_identifier", ObservabilityApiController, :issue)
     match(:*, "/api/v1/:issue_identifier", ObservabilityApiController, :method_not_allowed)
     match(:*, "/*path", ObservabilityApiController, :not_found)

@@ -349,7 +349,8 @@ Fields:
 
 - `kind` (string)
   - REQUIRED for dispatch.
-  - Current supported value: `linear`
+  - Current supported values: `linear`, `memory`, `none`
+  - `none` disables issue-tracker polling for monitor-only deployments.
 - `endpoint` (string)
   - Default for `tracker.kind == "linear"`: `https://api.linear.app/graphql`
 - `api_key` (string)
@@ -570,7 +571,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 Extension fields are documented in the extension section that defines them. Core conformance does
 not require recognizing or validating extension fields unless that extension is implemented.
 
-- `tracker.kind`: string, REQUIRED, currently `linear`
+- `tracker.kind`: string, REQUIRED, currently `linear`, `memory`, or `none`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`
@@ -1005,23 +1006,48 @@ If implemented:
 - The helper SHOULD use a platform-specific adapter for the targeted agent CLI/session protocol.
 - The helper SHOULD clone the source session using the platform's safest isolated-session primitive
   (`thread/fork` for Codex app-server).
-- The observer session SHOULD be ephemeral unless an operator explicitly requests durable observer
-  history.
+- The observer session SHOULD be ephemeral, but its inspection result SHOULD be retained as
+  per-issue history when session inspection is enabled.
 - The helper SHOULD run the observer prompt only on the cloned observer session.
 - The helper MUST keep the source session identity unchanged and MUST NOT start the summary turn on
   the source session.
 - The helper SHOULD return the platform, source session identity, observer session identity,
   observer turn/session identity, collected observer events, and best-effort final summary text.
-- The helper SHOULD expose whether the observer turn reported a cache hit when the targeted
-  protocol emits cached-token usage fields.
+- The helper SHOULD expose source-session cache metadata and observer-turn cache metadata separately
+  when the targeted protocol emits cached-token usage fields.
 - The helper MAY render the inspection result as a tracker comment body and post it through the
   configured tracker adapter.
+- The Elixir implementation persists inspection summaries as local JSONL under
+  `<workspace.root>/.symphony/session_inspections.jsonl`, exposes the flattened history through
+  `/api/v1/state`, and keeps the latest summary attached to the running issue snapshot.
+- Tracker comment creation MAY return a comment id. When available, the id SHOULD be recorded with
+  the summary so operators can connect the dashboard/API report to the tracker comment.
 - Client-side dynamic tools SHOULD be disabled or explicitly constrained for observer turns unless
   the caller opts into them.
+- Observer sessions SHOULD default to conservative approval and sandbox settings for the targeted
+  platform. For Codex app-server, the default observer posture SHOULD require approval for privileged
+  actions and use read-only sandboxing.
 
 The first supported observer use case is a session summary for operators. Future implementations MAY
 add more specialized observer prompts, such as work-unit classification, task counting, or
 verification-only summaries.
+
+Monitor-only implementations MAY discover external agent sessions without issue-tracker polling.
+They SHOULD use a standard adapter interface that provides platform name, cursor-based event reads,
+source-session resolution, source identity, source cache metadata, issue/inspection ids, and isolated
+observer summary execution. The shared monitor SHOULD own pending/success/failure payloads, repeated
+source-session upserts, JSONL persistence, and dashboard/API projection. For local Codex CLI, the
+Elixir adapter tails `~/.codex/history.jsonl` from the runtime start offset, resolves matching
+rollout JSONL files under `~/.codex/sessions/**`, and records source session id, mtime-derived
+status, cwd, model metadata, latest user query, and cached-token usage. It then starts a separate
+app-server, forks the collected rollout path with `thread/fork(path: ...)`, and sends an explicit
+no-tools summary prompt to the forked observer thread instead of mutating the source session. Gemini,
+Claude Code, OpenCode, and other cached CLIs SHOULD integrate by implementing the same external
+session adapter contract.
+
+Implementations MAY also expose an ingest API for external producers to push already-generated
+session summaries. The Elixir implementation accepts `POST /api/v1/session-inspections` with either
+`issue_id` or `source_session.id`.
 
 ### 10.4 Emitted Runtime Events (Upstream to Orchestrator)
 

@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1440" />
+<title>Concept · Cache-Preserving Branch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0a0b0d; --bg-1:#0e1014; --bg-2:#14171c; --bg-3:#1a1e25;
+    --line:#20252e; --line-2:#2a3140;
+    --ink:#e7eaf0; --ink-2:#aab2c0; --ink-3:#6b7384; --ink-4:#4a5263;
+    --accent:#8ef2a3; --accent-2:#b9d4ff; --warn:#ffb86b; --danger:#ff7a86; --violet:#c4a8ff; --teal:#7ce0d4;
+    --mono:'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --sans:'Inter', ui-sans-serif, system-ui, sans-serif;
+    --kr:'IBM Plex Sans KR','Inter', system-ui, sans-serif;
+  }
+  [data-theme="light"]{
+    --bg:#f6f5f0; --bg-1:#ecebe4; --bg-2:#fff; --bg-3:#f0efe8;
+    --line:#d9d6cb; --line-2:#bfbcaf;
+    --ink:#1a1a17; --ink-2:#4d4c44; --ink-3:#76746a; --ink-4:#a3a094;
+    --accent:#1f7a3a; --accent-2:#2c5cc6; --warn:#b8551a; --danger:#b8364a; --violet:#6a4dbd; --teal:#1c7a72;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  body[data-lang="kr"]{font-family:var(--kr)}
+  button{font:inherit;color:inherit;cursor:default}
+
+  .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:14px;padding:0 24px;height:52px;border-bottom:1px solid var(--line);background:color-mix(in oklch,var(--bg),transparent 12%);backdrop-filter:blur(14px)}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;letter-spacing:.03em}
+  .brand .logo{width:22px;height:22px;border-radius:6px;background:var(--ink);color:var(--bg);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:11px}
+  .brand b{color:var(--ink);font-weight:600} .brand span{color:var(--ink-3)}
+  .nav{display:flex;gap:4px;margin-left:12px}
+  .nav a{text-decoration:none;padding:6px 10px;border-radius:6px;font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+  .nav a.on{color:var(--ink);background:var(--bg-3)}
+  .spacer{flex:1}
+  .lang{display:inline-flex;border:1px solid var(--line-2);border-radius:7px;overflow:hidden}
+  .lang button{padding:5px 9px;background:transparent;border:0;font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+  .lang button.on{background:var(--bg-3);color:var(--ink)}
+  .tb-btn{padding:6px 11px;border-radius:7px;border:1px solid var(--line-2);background:var(--bg-2);font-family:var(--mono);font-size:11.5px;color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+  .tb-btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  [data-theme="light"] .tb-btn.primary{color:#fff}
+
+  .hero{max-width:1180px;margin:0 auto;padding:64px 32px 48px}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .eyebrow .ln{width:22px;height:1px;background:var(--ink-4)}
+  h1.t{font-size:56px;line-height:1.04;letter-spacing:-.025em;font-weight:600;margin:0 0 22px;max-width:18ch;text-wrap:balance}
+  h1.t em{font-style:normal;color:var(--violet);font-weight:600}
+  h1.t em.green{color:var(--accent)}
+  .lead{font-size:17px;line-height:1.55;color:var(--ink-2);max-width:64ch;margin:0 0 28px}
+  .meta{display:flex;gap:22px;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--ink-3);padding-top:24px;border-top:1px solid var(--line);flex-wrap:wrap}
+  .meta b{color:var(--ink);font-weight:500}
+
+  section.sec{max-width:1180px;margin:0 auto;padding:64px 32px;border-top:1px solid var(--line)}
+  .sec-head{display:grid;grid-template-columns:80px 1fr;gap:28px;margin-bottom:36px}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--ink-3);padding-top:8px}
+  .sec-num b{color:var(--ink);font-weight:600}
+  .sec-tt{font-size:30px;line-height:1.2;letter-spacing:-.018em;font-weight:600;margin:0 0 10px;max-width:28ch;text-wrap:balance}
+  .sec-sub{font-size:15px;color:var(--ink-2);max-width:72ch;margin:0;line-height:1.6}
+  .sec-body{display:grid;grid-template-columns:80px 1fr;gap:28px}
+  .sec-body .gut{font-family:var(--mono);font-size:11px;color:var(--ink-4)}
+  .sec-body .col{font-size:14.5px;line-height:1.7;color:var(--ink-2);max-width:70ch}
+  .sec-body .col p{margin:0 0 16px}
+  .sec-body .col p:last-child{margin:0}
+  .sec-body .col code{font-family:var(--mono);font-size:12px;padding:1px 6px;border:1px solid var(--line);background:var(--bg-2);color:var(--ink);border-radius:4px}
+  .sec-body .col strong{color:var(--ink);font-weight:600}
+
+  .stat-row{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line);border-radius:10px;margin-top:28px;overflow:hidden;background:var(--bg-1)}
+  .stat{padding:18px 22px;border-right:1px solid var(--line)}
+  .stat:last-child{border-right:0}
+  .stat .n{font-family:var(--mono);font-size:28px;font-weight:600;color:var(--ink);letter-spacing:-.015em;line-height:1}
+  .stat .n.green{color:var(--accent)} .stat .n.violet{color:var(--violet)} .stat .n.warn{color:var(--warn)}
+  .stat .lbl{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.04em;margin-top:8px;line-height:1.4}
+
+  .diagram{grid-column:1/-1;margin-top:36px;border:1px solid var(--line);border-radius:10px;background:var(--bg-1);overflow:hidden}
+  .diagram-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.07em;text-transform:uppercase}
+  .diagram-hdr b{color:var(--ink);font-weight:600}
+  .diagram-body{padding:24px}
+
+  .blocks{display:grid;grid-template-columns:1.1fr 1.1fr 1.6fr 1.4fr .8fr;gap:6px;margin-bottom:14px}
+  .block{padding:12px 14px;border-radius:8px;border:1px solid var(--line-2);background:var(--bg-2)}
+  .block .lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);margin-bottom:6px}
+  .block .nm{font-family:var(--mono);font-size:12px;color:var(--ink);font-weight:500;margin-bottom:4px}
+  .block .dt{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);line-height:1.5}
+  .block.s{background:color-mix(in oklch,var(--accent),transparent 92%);border-color:color-mix(in oklch,var(--accent),transparent 70%)}
+  .block.s .lbl{color:var(--accent)}
+  .block.d{background:color-mix(in oklch,var(--accent-2),transparent 88%);border-color:color-mix(in oklch,var(--accent-2),transparent 60%)}
+  .block.d .lbl{color:var(--accent-2)}
+
+  table.cmp{width:100%;border-collapse:collapse;font-size:13px}
+  table.cmp th,table.cmp td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.cmp th{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500;background:var(--bg-2)}
+  table.cmp td:first-child{font-weight:500;color:var(--ink);width:28%}
+  table.cmp td b{color:var(--ink);font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;font-family:var(--mono);font-size:10px;border:1px solid var(--line-2);color:var(--ink-2)}
+  .pill .d{width:6px;height:6px;border-radius:50%}
+  .pill.oa .d{background:#10a37f} .pill.ant .d{background:#d97757} .pill.gem .d{background:#4285f4}
+
+  .callout{grid-column:1/-1;margin-top:18px;padding:16px 18px;border-left:2px solid var(--violet);background:color-mix(in oklch,var(--violet),transparent 93%);border-radius:0 8px 8px 0;font-size:13.5px;line-height:1.6;color:var(--ink-2)}
+  .callout b{color:var(--ink);font-weight:600}
+  .callout .tag{display:inline-block;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--violet);margin-bottom:4px}
+
+  .fork{display:flex;flex-direction:column}
+  .ft{display:grid;grid-template-columns:120px 1fr 100px;align-items:center;gap:14px;padding:14px 0;border-bottom:1px dashed var(--line)}
+  .ft:last-child{border-bottom:0}
+  .ft-l{font-family:var(--mono);font-size:10.5px;color:var(--ink-2)}
+  .ft-l b{font-size:11.5px;display:block;margin-bottom:2px}
+  .ft-l.main b{color:var(--accent-2)} .ft-l.eval b{color:var(--violet)} .ft-l.naive b{color:var(--warn)}
+  .bar{position:relative;height:30px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2);display:flex;overflow:hidden}
+  .seg{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:10px;letter-spacing:.04em;border-right:1px solid var(--line)}
+  .seg:last-child{border-right:0}
+  .seg.cached{background:color-mix(in oklch,var(--accent),transparent 86%);color:var(--accent)}
+  .seg.live{background:color-mix(in oklch,var(--accent-2),transparent 84%);color:var(--accent-2)}
+  .seg.eval{background:color-mix(in oklch,var(--violet),transparent 78%);color:var(--violet)}
+  .seg.miss{background:color-mix(in oklch,var(--warn),transparent 80%);color:var(--warn);background-image:repeating-linear-gradient(45deg,transparent 0,transparent 6px,color-mix(in oklch,var(--warn),transparent 92%) 6px,color-mix(in oklch,var(--warn),transparent 92%) 12px)}
+  .ft-c{font-family:var(--mono);font-size:11px;color:var(--ink-2);text-align:right}
+  .ft-c b{color:var(--ink);font-weight:600}
+  .ft-c.green b{color:var(--accent)} .ft-c.warn b{color:var(--warn)}
+
+  pre.code{margin:8px 0 0;padding:16px 18px;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:11.5px;line-height:1.6;color:var(--ink-2);overflow-x:auto}
+  pre.code .c{color:var(--ink-4)} pre.code .k{color:var(--accent-2)} pre.code .s{color:var(--accent)} pre.code .v{color:var(--violet)} pre.code .n{color:var(--warn)}
+
+  .check{list-style:none;padding:0;margin:14px 0 0}
+  .check li{display:grid;grid-template-columns:22px 1fr;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line);font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+  .check li:last-child{border-bottom:0}
+  .check li::before{content:"✓";color:var(--accent);font-family:var(--mono);font-size:12px;line-height:1.6}
+  .check.x li::before{content:"×";color:var(--danger)}
+  .check b{color:var(--ink);font-weight:600}
+
+  .rules{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}
+  .rule{padding:16px 18px;border:1px solid var(--line);border-radius:10px;background:var(--bg-1)}
+  .rule .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-4);margin-bottom:10px}
+  .rule .rt{font-size:16px;font-weight:600;color:var(--ink);margin-bottom:8px;letter-spacing:-.01em}
+  .rule .rb{font-size:13.5px;color:var(--ink-2);line-height:1.6}
+
+  footer.foot{max-width:1180px;margin:0 auto;padding:48px 32px 80px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-end;gap:24px;font-family:var(--mono);font-size:11px;color:var(--ink-3);flex-wrap:wrap}
+
+  .kr-only,.en-only{display:none}
+  body[data-lang="en"] .en-only{display:revert}
+  body[data-lang="kr"] .kr-only{display:revert}
+  /* table cells need block-level reveal */
+  body[data-lang="en"] td.en-only,body[data-lang="en"] li.en-only,body[data-lang="en"] p.en-only{display:table-cell}
+  body[data-lang="en"] li.en-only{display:list-item}
+  body[data-lang="en"] p.en-only{display:block}
+  body[data-lang="kr"] td.kr-only{display:table-cell}
+  body[data-lang="kr"] li.kr-only{display:list-item}
+  body[data-lang="kr"] p.kr-only{display:block}
+
+  @media(max-width:760px){
+    .sec-head,.sec-body{grid-template-columns:1fr;gap:14px}
+    h1.t{font-size:38px} .hero{padding:36px 18px}
+    section.sec{padding:36px 18px}
+    .blocks{grid-template-columns:1fr 1fr}
+    .stat-row,.rules{grid-template-columns:1fr 1fr}
+  }
+</style>
+</head>
+<body data-theme="dark" data-lang="en">
+
+<div class="topbar">
+  <div class="brand"><span class="logo">SV</span><b>session-viewer</b><span>/</span><span class="en-only">concept guide</span><span class="kr-only">개념 가이드</span></div>
+  <nav class="nav">
+    <a href="Session Viewer.html"><span class="en-only">App</span><span class="kr-only">앱</span></a>
+    <a class="on" href="#"><span class="en-only">Concept</span><span class="kr-only">개념</span></a>
+  </nav>
+  <div class="spacer"></div>
+  <div class="lang" id="lang">
+    <button data-lang="en" class="on">EN</button>
+    <button data-lang="kr">KR</button>
+  </div>
+  <button class="tb-btn" id="theme">☾</button>
+  <a class="tb-btn primary" href="Session Viewer.html"><span class="en-only">Open viewer</span><span class="kr-only">뷰어 열기</span> →</a>
+</div>
+
+<header class="hero">
+  <div class="eyebrow"><span class="ln"></span><span class="en-only">Architecture · v0.4</span><span class="kr-only">아키텍처 · v0.4</span></div>
+  <h1 class="t">
+    <span class="en-only">Summarize a running session <em class="green">without breaking</em> <em>the prompt cache.</em></span>
+    <span class="kr-only">실행 중인 세션을 요약하면서도 <em class="green">프롬프트 캐시를</em> <em>깨뜨리지 않는 법.</em></span>
+  </h1>
+  <p class="lead en-only">An LLM agent's KV cache is fragile. Inject a single summary instruction into the live thread and you invalidate every previously cached token — latency spikes, cost balloons, the agent loses focus. This guide explains the prefix-hash invariant, the fan-out-without-fan-in pattern, and how the Session Viewer routes summaries through a forked sidecar thread that shares the prefix and never touches the source.</p>
+  <p class="lead kr-only">LLM 에이전트의 KV 캐시는 취약합니다. 활성 스레드에 요약 명령을 하나 주입하는 순간 이전에 캐시된 모든 토큰이 무효화됩니다 — 지연 시간이 급증하고 비용이 폭증하며 에이전트는 초점을 잃습니다. 이 가이드는 접두사 해시 불변성, 팬인 없는 팬아웃 패턴, 그리고 Session Viewer가 어떻게 접두사를 공유하면서 원본 스레드는 절대 건드리지 않는 분기된 사이드카 스레드를 통해 요약을 라우팅하는지 설명합니다.</p>
+  <div class="meta">
+    <span><b>9</b> · <span class="en-only">sections</span><span class="kr-only">섹션</span></span>
+    <span><b>~12</b> · <span class="en-only">min read</span><span class="kr-only">분 분량</span></span>
+    <span class="en-only">AI infra eng.</span><span class="kr-only">AI 인프라 엔지니어</span>
+    <span style="margin-left:auto" class="en-only">based on internal report</span>
+    <span style="margin-left:auto" class="kr-only">내부 보고서 기반</span>
+  </div>
+</header>
+
+<!-- §1 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>01</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Caches break the moment you mutate the prefix</h2>
+      <h2 class="sec-tt kr-only">접두사를 변경하는 순간 캐시는 깨진다</h2>
+      <p class="sec-sub en-only">Modern inference stacks (vLLM, the major hosted APIs) deduplicate prefill work by hashing prompt blocks in order. A single inserted token at any position invalidates every block that follows it.</p>
+      <p class="sec-sub kr-only">최신 추론 스택(vLLM, 주요 호스팅 API)은 프롬프트 블록을 순서대로 해싱하여 프리필 작업을 중복 제거합니다. 어느 위치든 토큰 하나가 삽입되면 그 뒤의 모든 블록이 무효화됩니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">prefix</div>
+    <div class="col">
+      <p class="en-only">Transformers compute self-attention against every prior token. As the prompt grows, prefill cost grows quadratically. The fix — KV caching — stores per-layer key/value tensors so subsequent calls that share a prefix can skip prefill entirely.</p>
+      <p class="kr-only">트랜스포머는 모든 이전 토큰에 대해 자가 주의력을 계산합니다. 프롬프트가 커질수록 프리필 비용이 제곱으로 증가합니다. 그 해법인 KV 캐싱은 계층별 키/값 텐서를 저장하여 접두사를 공유하는 후속 호출이 프리필을 완전히 건너뛸 수 있게 합니다.</p>
+      <p class="en-only">The cache is keyed by a chained hash: each block's hash combines the parent block's hash, its own exact tokens, and model parameters. That chain is the entire reason cache hits are fast — and the entire reason any tampering with mid-prompt content is fatal.</p>
+      <p class="kr-only">캐시는 체인 해시로 키 지정됩니다: 각 블록의 해시는 부모 블록의 해시, 자신의 정확한 토큰, 모델 매개변수를 결합합니다. 이 체인이 캐시 적중이 빠른 이유 전부이며, 프롬프트 중간 내용을 건드리는 것이 치명적인 이유 전부입니다.</p>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="n green">−80%</div><div class="lbl"><span class="en-only">TTFT reduction</span><span class="kr-only">첫 토큰 시간 감소</span></div></div>
+      <div class="stat"><div class="n green">−90%</div><div class="lbl"><span class="en-only">Input token cost cut</span><span class="kr-only">입력 토큰 비용 절감</span></div></div>
+      <div class="stat"><div class="n warn">+25%</div><div class="lbl"><span class="en-only">Cache write overhead</span><span class="kr-only">캐시 쓰기 오버헤드</span></div></div>
+      <div class="stat"><div class="n violet">∞</div><div class="lbl"><span class="en-only">Prefix tokens reused</span><span class="kr-only">재사용된 접두사 토큰</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- §2 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>02</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Prefix hashing, block by block</h2>
+      <h2 class="sec-tt kr-only">블록 단위로 본 접두사 해싱</h2>
+      <p class="sec-sub en-only">Inference engines split a prompt into blocks (typically 16 or 32 tokens). Each block produces a deterministic hash from { parent_hash, exact_tokens, model_id }. Cache lookup is exact-prefix matching — there is no fuzzy match.</p>
+      <p class="sec-sub kr-only">추론 엔진은 프롬프트를 블록(보통 16 또는 32 토큰)으로 분할합니다. 각 블록은 { 부모 해시, 정확한 토큰, 모델 ID }로부터 결정론적 해시를 생성합니다. 캐시 조회는 정확한 접두사 일치이며, 퍼지 일치는 없습니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">hash</div>
+    <div class="col">
+      <p class="en-only">Order static content first, dynamic content last. The most stable layout looks like: system instructions → tool schemas → reference docs → conversation history (append-only) → current user input.</p>
+      <p class="kr-only">정적 콘텐츠를 앞에, 동적 콘텐츠를 뒤에 배치하세요. 가장 안정적인 레이아웃: 시스템 명령 → 도구 스키마 → 참조 문서 → 대화 기록(추가 전용) → 현재 사용자 입력.</p>
+    </div>
+    <div class="diagram">
+      <div class="diagram-hdr"><span>prompt anatomy · order matters</span><b>← cached ······ live →</b></div>
+      <div class="diagram-body">
+        <div class="blocks">
+          <div class="block s"><div class="lbl">block 0</div><div class="nm en-only">system rules</div><div class="nm kr-only">시스템 규칙</div><div class="dt en-only">static · cached</div><div class="dt kr-only">정적 · 캐시됨</div></div>
+          <div class="block s"><div class="lbl">block 1</div><div class="nm en-only">tool schema</div><div class="nm kr-only">도구 스키마</div><div class="dt en-only">static · cached</div><div class="dt kr-only">정적 · 캐시됨</div></div>
+          <div class="block s"><div class="lbl">block 2</div><div class="nm en-only">reference docs</div><div class="nm kr-only">참조 문서</div><div class="dt en-only">static · cached</div><div class="dt kr-only">정적 · 캐시됨</div></div>
+          <div class="block s"><div class="lbl">blocks 3..N</div><div class="nm en-only">history (append-only)</div><div class="nm kr-only">기록 (추가 전용)</div><div class="dt en-only">static · cached</div><div class="dt kr-only">정적 · 캐시됨</div></div>
+          <div class="block d"><div class="lbl">tail</div><div class="nm en-only">current input</div><div class="nm kr-only">현재 입력</div><div class="dt en-only">dynamic · prefill</div><div class="dt kr-only">동적 · 프리필</div></div>
+        </div>
+        <pre class="code"><span class="c"># cumulative hash chain</span>
+<span class="k">hash</span>(block_n) = <span class="v">sha256</span>(<span class="k">hash</span>(block_{n-1}) ‖ tokens_n ‖ model_id)
+<span class="c"># a single inserted token at block k →</span>
+<span class="c"># every hash from k onward diverges → cache miss</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- §3 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>03</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Provider mechanics differ — and they matter</h2>
+      <h2 class="sec-tt kr-only">공급자별 동작은 다르며, 그 차이가 중요하다</h2>
+      <p class="sec-sub en-only">OpenAI, Anthropic, and Google each expose different cache primitives. Mismatching your branching strategy to the provider's mechanics is the most common reason a 'should-be-cached' branch silently misses.</p>
+      <p class="sec-sub kr-only">OpenAI, Anthropic, Google은 각기 다른 캐시 기본 요소를 노출합니다. 분기 전략을 공급자의 동작과 맞추지 못하는 것이 '캐시되어야 할' 분기가 조용히 누락되는 가장 흔한 이유입니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">api</div>
+    <div class="col"><p class="en-only">Match the breakpoint placement, granularity, and TTL of each provider. The discount tier only kicks in when your routing key lands the request on a node that still holds the warm KV cache.</p>
+      <p class="kr-only">각 공급자의 중단점 배치, 세분성, TTL을 맞추세요. 할인 티어는 라우팅 키가 따뜻한 KV 캐시를 보유한 노드로 요청을 라우팅할 때만 적용됩니다.</p></div>
+    <div class="diagram">
+      <div class="diagram-hdr"><span>provider mechanics · 2025 baselines</span><b>match strategy to API</b></div>
+      <div class="diagram-body" style="padding:0">
+        <table class="cmp">
+          <thead>
+            <tr><th><span class="en-only">Attribute</span><span class="kr-only">속성</span></th>
+              <th><span class="pill oa"><span class="d"></span>OpenAI</span></th>
+              <th><span class="pill ant"><span class="d"></span>Anthropic</span></th>
+              <th><span class="pill gem"><span class="d"></span>Gemini</span></th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="en-only">Activation</span><span class="kr-only">활성화</span></td>
+              <td><span class="en-only">Auto over 1,024 tok</span><span class="kr-only">1,024 토큰 초과 시 자동</span></td>
+              <td><span class="en-only">Explicit cache_control marker</span><span class="kr-only">명시적 cache_control 마커</span></td>
+              <td><span class="en-only">Implicit (2.5+) or explicit cache ID</span><span class="kr-only">암시적(2.5+) 또는 명시적 캐시 ID</span></td></tr>
+            <tr><td><span class="en-only">Granularity</span><span class="kr-only">단위</span></td>
+              <td><span class="en-only">≥1,024 tok, 128 step</span><span class="kr-only">≥1,024 토큰, 128 단위</span></td>
+              <td><span class="en-only">Up to 4 breakpoints / req</span><span class="kr-only">요청당 최대 4 중단점</span></td>
+              <td><span class="en-only">1,024 (Flash) / 4,096 (Pro)</span><span class="kr-only">1,024(Flash) / 4,096(Pro)</span></td></tr>
+            <tr><td><span class="en-only">Routing</span><span class="kr-only">라우팅</span></td>
+              <td><span class="en-only">Hash of first ~256 tok + prompt_cache_key</span><span class="kr-only">첫 ~256 토큰 해시 + prompt_cache_key</span></td>
+              <td><span class="en-only">20-block lookback from breakpoint</span><span class="kr-only">중단점에서 20블록 룩백</span></td>
+              <td><span class="en-only">Reference pre-provisioned cache ID</span><span class="kr-only">사전 프로비저닝된 캐시 ID 참조</span></td></tr>
+            <tr><td><span class="en-only">Default TTL</span><span class="kr-only">기본 TTL</span></td>
+              <td><span class="en-only">5–10 min, up to 24h on premium</span><span class="kr-only">5–10분, 프리미엄 최대 24시간</span></td>
+              <td><span class="en-only">5 min default, 1h premium</span><span class="kr-only">5분 기본, 1시간 프리미엄</span></td>
+              <td><span class="en-only">1h default, configurable</span><span class="kr-only">1시간 기본, 구성 가능</span></td></tr>
+            <tr><td><span class="en-only">Discount</span><span class="kr-only">할인</span></td>
+              <td><b><span class="en-only">≈ 90% on cached input</span><span class="kr-only">캐시된 입력 ≈ 90%</span></b></td>
+              <td><b><span class="en-only">≈ 90% (write cost separate)</span><span class="kr-only">≈ 90%(쓰기 비용 별도)</span></b></td>
+              <td><b>75 – 90%</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="callout">
+      <div class="tag">caveat · anthropic</div>
+      <span class="en-only">Anthropic's 20-block lookback is the sneakiest gotcha. If your branch adds more than 20 new blocks (turns, tool outputs) past the last breakpoint, the lookback window misses the cached prefix entirely. <b>Park your breakpoints on the last static block</b> — never on volatile message tails.</span>
+      <span class="kr-only">Anthropic의 20-블록 룩백이 가장 교묘한 함정입니다. 분기가 마지막 중단점 이후 20개 이상의 새 블록(턴, 도구 출력)을 추가하면, 룩백 윈도우가 캐시된 접두사에 완전히 도달하지 못합니다. <b>변동성 있는 메시지 끝이 아닌 마지막 정적 블록에 중단점을 배치하세요.</b></span>
+    </div>
+  </div>
+</section>
+
+<!-- §4 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>04</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Why injecting a summary into the live thread fails</h2>
+      <h2 class="sec-tt kr-only">활성 스레드에 요약을 주입하면 실패하는 이유</h2>
+      <p class="sec-sub en-only">Two compounding failures: the cache breaks (cost), and the agent's reasoning drifts (correctness). One failure mode would be tolerable. Both at once is not.</p>
+      <p class="sec-sub kr-only">두 가지 복합 실패: 캐시가 깨지고(비용), 에이전트의 추론이 표류합니다(정확성). 하나만이라면 견딜 수 있지만, 두 가지가 동시에 발생하는 것은 받아들일 수 없습니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">risk</div>
+    <div class="col">
+      <p class="en-only">Performance studies show agent task completion drops by ~39% on average when instructions and exploratory dialogue interleave across multiple turns. Inject 'summarize the above' into a working thread and the model treats it as in-fiction reality — premature conclusions, hallucinated self-evaluations, dropped goals.</p>
+      <p class="kr-only">성능 연구에 따르면 명령어와 탐색적 대화가 여러 턴에 걸쳐 혼재할 때 에이전트의 작업 완료율이 평균 약 39% 감소합니다. 작업 중인 스레드에 '위 내용을 요약하라'를 주입하면 모델은 이를 픽션 내 현실로 취급합니다 — 조급한 결론, 환각적 자기 평가, 목표 누락.</p>
+      <p class="en-only">Worse, the cache miss is silent until billing arrives. A 30k-token conversation that was previously billed at the cached-input rate suddenly pays for full prefill on every turn. That's roughly a 9× cost step-change per request.</p>
+      <p class="kr-only">더욱 심각한 것은, 캐시 누락은 청구서가 도착하기 전까지 침묵한다는 점입니다. 캐시된 입력 요율로 청구되던 30k 토큰 대화가 갑자기 매 턴마다 전체 프리필 비용을 지불하게 됩니다. 요청당 약 9배의 비용 변화입니다.</p>
+    </div>
+  </div>
+</section>
+
+<!-- §5 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>05</b></div>
+    <div>
+      <h2 class="sec-tt en-only">The fix: fork the thread, don't poke it</h2>
+      <h2 class="sec-tt kr-only">해법: 스레드를 건드리지 말고 분기하라</h2>
+      <p class="sec-sub en-only">Take a snapshot of the live thread state at a checkpoint, copy it into a new thread_id, and append your evaluation prompt only there. The forked thread shares the prefix byte-for-byte — every cached block hits.</p>
+      <p class="sec-sub kr-only">체크포인트에서 활성 스레드 상태의 스냅샷을 캡처하고, 새 thread_id에 복사한 뒤, 평가 프롬프트를 거기에만 추가하세요. 분기된 스레드는 접두사를 바이트 단위로 공유하므로 캐시된 모든 블록이 적중합니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">fork</div>
+    <div class="col">
+      <p><strong class="en-only">Fan-out without fan-in.</strong><strong class="kr-only">팬인 없는 팬아웃.</strong>
+        <span class="en-only"> Route the same checkpoint state into both the primary agent node and an evaluation sidecar node in parallel. The sidecar emits its result to telemetry or external storage — never back into the shared graph state. The primary thread's next turn still hits the original prefix cache cleanly.</span>
+        <span class="kr-only"> 동일한 체크포인트 상태를 주 에이전트 노드와 평가 사이드카 노드로 병렬 라우팅하세요. 사이드카는 결과를 텔레메트리 또는 외부 저장소로 내보냅니다 — 절대 공유 그래프 상태로 되돌리지 않습니다. 주 스레드의 다음 턴은 여전히 원본 접두사 캐시에 깨끗하게 적중합니다.</span></p>
+    </div>
+    <div class="diagram">
+      <div class="diagram-hdr"><span>cost comparison · 30k-token session, +1 turn</span><b>same workload, three strategies</b></div>
+      <div class="diagram-body">
+        <div class="fork">
+          <div class="ft">
+            <div class="ft-l naive"><b><span class="en-only">Naive: inline summary</span><span class="kr-only">순진한 방식: 인라인 요약</span></b><span class="en-only">inline injection</span><span class="kr-only">인라인 주입</span></div>
+            <div class="bar"><div class="seg miss" style="width:94%"><span class="en-only">full prefill (miss)</span><span class="kr-only">전체 프리필 (누락)</span></div><div class="seg live" style="width:6%">+turn</div></div>
+            <div class="ft-c warn"><div><span class="en-only">next-turn cost</span><span class="kr-only">다음 턴 비용</span></div><b>$0.270</b></div>
+          </div>
+          <div class="ft">
+            <div class="ft-l main"><b><span class="en-only">Main thread (untouched)</span><span class="kr-only">주 스레드 (변경 없음)</span></b><span class="en-only">append-only</span><span class="kr-only">추가 전용</span></div>
+            <div class="bar"><div class="seg cached" style="width:94%"><span class="en-only">cached prefix · skipped</span><span class="kr-only">캐시된 접두사 · 건너뜀</span></div><div class="seg live" style="width:6%"><span class="en-only">next user turn</span><span class="kr-only">다음 사용자 턴</span></div></div>
+            <div class="ft-c green"><div><span class="en-only">next-turn cost</span><span class="kr-only">다음 턴 비용</span></div><b>$0.027</b></div>
+          </div>
+          <div class="ft">
+            <div class="ft-l eval"><b><span class="en-only">Forked eval branch</span><span class="kr-only">분기된 평가 분기</span></b><span class="en-only">shares prefix</span><span class="kr-only">접두사 공유</span></div>
+            <div class="bar"><div class="seg cached" style="width:94%"><span class="en-only">cached prefix · skipped</span><span class="kr-only">캐시된 접두사 · 건너뜀</span></div><div class="seg eval" style="width:6%"><span class="en-only">summary prompt</span><span class="kr-only">요약 프롬프트</span></div></div>
+            <div class="ft-c green"><div><span class="en-only">branch cost</span><span class="kr-only">분기 비용</span></div><b>$0.029</b></div>
+          </div>
+        </div>
+        <pre class="code"><span class="c"># LangGraph · fork at checkpoint</span>
+state = checkpointer.<span class="k">get</span>(thread_id=<span class="s">"s_104a_main"</span>)
+branch = state.<span class="k">copy</span>(thread_id=<span class="s">"s_104a_eval_b1"</span>)
+branch.messages.<span class="k">append</span>({<span class="v">role</span>: <span class="s">"system"</span>, <span class="v">content</span>: <span class="s">"summarize the session above"</span>})
+result = llm.<span class="k">invoke</span>(branch.messages, prompt_cache_key=<span class="s">"s_104a_main"</span>)
+<span class="c"># cache_read_input_tokens ≈ 24,902  ✓</span>
+<span class="c"># main thread: untouched, still hits cache on next turn</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- §6 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>06</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Keep history append-only</h2>
+      <h2 class="sec-tt kr-only">기록은 추가 전용으로 유지하라</h2>
+      <p class="sec-sub en-only">Mutating earlier messages — even shortening tool output — burns the cache from that point forward. Newly summarized context goes at the tail, never in place of older turns.</p>
+      <p class="sec-sub kr-only">이전 메시지를 변경하는 것은 — 도구 출력을 줄이는 것조차도 — 그 시점부터의 캐시를 소각시킵니다. 새로 요약된 컨텍스트는 기존 턴을 대체하지 않고 끝에 추가됩니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">hist</div>
+    <div class="col" style="max-width:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+        <div>
+          <div style="font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:4px">✓ <span class="en-only">Do</span><span class="kr-only">권장</span></div>
+          <ul class="check">
+            <li><div><b>append</b> · <span class="en-only">Append a summary block at the tail just before the next user input</span><span class="kr-only">다음 사용자 입력 직전 끝에 요약 블록을 추가</span></div></li>
+            <li><div><b>retrieve</b> · <span class="en-only">Expose summaries via tool calls (<code>get_session_summary</code>) so the prefix stays static</span><span class="kr-only">도구 호출(<code>get_session_summary</code>)을 통해 요약 노출하여 접두사를 정적으로 유지</span></div></li>
+            <li><div><b>breakpoint</b> · <span class="en-only">Place Anthropic breakpoints on the last static block (after schemas, before history)</span><span class="kr-only">Anthropic 중단점을 마지막 정적 블록에 배치(스키마 뒤, 기록 앞)</span></div></li>
+            <li><div><b>evict once</b> · <span class="en-only">When eviction is unavoidable, accept exactly one cache miss to install the new prefix</span><span class="kr-only">축출이 불가피할 때, 새 접두사 설치를 위해 정확히 한 번의 캐시 누락을 수용</span></div></li>
+          </ul>
+        </div>
+        <div>
+          <div style="font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--danger);margin-bottom:4px">× <span class="en-only">Don't</span><span class="kr-only">지양</span></div>
+          <ul class="check x">
+            <li><div><b>mutate</b> · <span class="en-only">Edit, shorten, or rewrite past messages mid-session</span><span class="kr-only">세션 도중 과거 메시지를 편집·축약·재작성</span></div></li>
+            <li><div><b>volatile</b> · <span class="en-only">Inject the current date or volatile state into the system prompt</span><span class="kr-only">현재 날짜나 변동성 있는 상태를 시스템 프롬프트에 주입</span></div></li>
+            <li><div><b>reorder</b> · <span class="en-only">Reorder messages to 'clean up' for an evaluation pass</span><span class="kr-only">평가 패스를 위해 메시지를 '정리'하려고 재정렬</span></div></li>
+            <li><div><b>interleave</b> · <span class="en-only">Interleave summary instructions with the live agent loop</span><span class="kr-only">요약 명령을 활성 에이전트 루프와 교차</span></div></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- §7 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>07</b></div>
+    <div>
+      <h2 class="sec-tt en-only">A semantic memory layer keeps summaries out of the prefix</h2>
+      <h2 class="sec-tt kr-only">시맨틱 메모리 계층이 요약을 접두사 밖에 둔다</h2>
+      <p class="sec-sub en-only">Branched evaluations produce facts, decisions, and trajectory scores. Push them to a vector / graph store (Mem0, vector DB, LangSmith dataset) — never back into the conversation array. Retrieve on demand via tools.</p>
+      <p class="sec-sub kr-only">분기된 평가는 사실, 결정, 궤적 점수를 생성합니다. 이를 벡터/그래프 저장소(Mem0, 벡터 DB, LangSmith 데이터셋)로 푸시하세요 — 절대 대화 배열로 되돌리지 마세요. 도구를 통해 필요 시 검색하세요.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">mem</div>
+    <div class="col">
+      <pre class="code"><span class="c"># branch produces a fact, push it sideways</span>
+result = branch.<span class="k">run</span>()
+mem0.<span class="k">add</span>(content=result.summary, metadata={<span class="v">session</span>: <span class="s">"S-104A"</span>})
+langsmith.<span class="k">log_evaluation</span>(thread=<span class="s">"s_104a_main"</span>, score=result.judge)
+
+<span class="c"># next turn on the main thread retrieves only when needed</span>
+agent.<span class="k">tools</span> += [<span class="v">get_session_summary</span>]  <span class="c"># dynamic retrieval, prefix stays static</span></pre>
+    </div>
+    <div class="callout">
+      <div class="tag">double-caching</div>
+      <span class="en-only"><b>The inference layer caches the prefix; the memory layer caches the meaning.</b> The two never collide because the meaning never sits in the prefix.</span>
+      <span class="kr-only"><b>추론 계층은 접두사를 캐시하고, 메모리 계층은 의미를 캐시합니다.</b> 의미가 접두사에 결코 위치하지 않으므로 둘은 충돌하지 않습니다.</span>
+    </div>
+  </div>
+</section>
+
+<!-- §8 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>08</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Telemetry: trust but verify the cache hit</h2>
+      <h2 class="sec-tt kr-only">텔레메트리: 캐시 적중을 신뢰하되 검증하라</h2>
+      <p class="sec-sub en-only">Every provider returns cache_read / cache_write / cache_creation token counts on the response. If your branch's cache_read drops to zero, your prefix invariant has been violated. Treat that as a hard alert.</p>
+      <p class="sec-sub kr-only">모든 공급자는 응답에 cache_read / cache_write / cache_creation 토큰 수를 반환합니다. 분기의 cache_read가 0으로 떨어지면, 접두사 불변성이 위반된 것입니다. 이를 강한 경보로 취급하세요.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">ops</div>
+    <div class="col">
+      <p class="en-only">Pin all branch requests to the same prompt_cache_key as the source thread so the provider's hash-based router lands them on the same backend node — same GPU, same VRAM, near-zero prefill latency. OpenAI's cache-aware routing has been measured at 13–31% TTFT improvement, up to 80% cost savings on heavy workloads.</p>
+      <p class="kr-only">모든 분기 요청을 원본 스레드와 동일한 prompt_cache_key에 고정하여, 공급자의 해시 기반 라우터가 동일한 백엔드 노드에 — 동일한 GPU, 동일한 VRAM, 거의 0에 가까운 프리필 지연 시간 — 라우팅하도록 하세요. OpenAI의 캐시 인지 라우팅은 TTFT 13–31% 개선, 무거운 워크로드에서 비용 최대 80% 절감으로 측정되었습니다.</p>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="n green">+13–31%</div><div class="lbl"><span class="en-only">TTFT improvement</span><span class="kr-only">TTFT 개선</span></div></div>
+      <div class="stat"><div class="n green">−80%</div><div class="lbl"><span class="en-only">Cost savings</span><span class="kr-only">비용 절감</span></div></div>
+      <div class="stat"><div class="n warn">&lt; 0.1%</div><div class="lbl"><span class="en-only">Hash collisions on routing key</span><span class="kr-only">라우팅 키 해시 충돌</span></div></div>
+      <div class="stat"><div class="n violet">1 : N</div><div class="lbl"><span class="en-only">Branches sharing parent prefix</span><span class="kr-only">부모 접두사 공유 분기</span></div></div>
+    </div>
+    <div style="grid-column:1/-1">
+      <pre class="code" style="margin-top:24px"><span class="c"># sidecar telemetry — the only metric that matters</span>
+{
+  <span class="v">"thread"</span>: <span class="s">"s_104a_eval_b1"</span>,
+  <span class="v">"cache_read_input_tokens"</span>:  <span class="n">24902</span>,  <span class="c">// must be > 0</span>
+  <span class="v">"cache_creation_input_tokens"</span>: <span class="n">0</span>,
+  <span class="v">"cache_write_input_tokens"</span>:  <span class="n">92</span>,
+  <span class="v">"ttft_ms"</span>: <span class="n">142</span>,
+  <span class="v">"prompt_cache_key"</span>: <span class="s">"s_104a_main"</span>
+}</pre>
+    </div>
+  </div>
+</section>
+
+<!-- §9 -->
+<section class="sec">
+  <div class="sec-head">
+    <div class="sec-num">§<b>09</b></div>
+    <div>
+      <h2 class="sec-tt en-only">Putting it together</h2>
+      <h2 class="sec-tt kr-only">종합</h2>
+      <p class="sec-sub en-only">The Session Viewer is the operator surface for this architecture. Every action you take in the UI maps to a single rule.</p>
+      <p class="sec-sub kr-only">Session Viewer는 이 아키텍처의 운영자 인터페이스입니다. UI에서 수행하는 모든 동작은 하나의 규칙으로 매핑됩니다.</p>
+    </div>
+  </div>
+  <div class="sec-body">
+    <div class="gut">∎</div>
+    <div class="col" style="max-width:none">
+      <div class="rules">
+        <div class="rule">
+          <div class="tag">branch</div>
+          <div class="rt en-only">Branch, never inject</div><div class="rt kr-only">주입하지 말고, 분기하라</div>
+          <div class="rb en-only">Every summary, audit, or judge prompt runs in a forked thread_id. The source thread is read-only.</div>
+          <div class="rb kr-only">모든 요약·감사·판사 프롬프트는 분기된 thread_id에서 실행됩니다. 원본 스레드는 읽기 전용입니다.</div>
+        </div>
+        <div class="rule">
+          <div class="tag">route</div>
+          <div class="rt en-only">Pin the routing key</div><div class="rt kr-only">라우팅 키를 고정하라</div>
+          <div class="rb en-only">Branches share prompt_cache_key with the source so the provider routes them to the same warm node.</div>
+          <div class="rb kr-only">분기는 원본과 prompt_cache_key를 공유하여 공급자가 동일한 따뜻한 노드로 라우팅합니다.</div>
+        </div>
+        <div class="rule">
+          <div class="tag">pipe</div>
+          <div class="rt en-only">Pipe out, not back</div><div class="rt kr-only">되돌리지 말고, 내보내라</div>
+          <div class="rb en-only">Branch results stream to MCP / CLI / memory store. They never re-enter the conversation array.</div>
+          <div class="rb kr-only">분기 결과는 MCP/CLI/메모리 저장소로 스트리밍됩니다. 대화 배열로 다시 들어가지 않습니다.</div>
+        </div>
+        <div class="rule">
+          <div class="tag">watch</div>
+          <div class="rt en-only">Watch cache_read</div><div class="rt kr-only">cache_read를 주시하라</div>
+          <div class="rb en-only">If a branch reports cache_read = 0, the prefix invariant broke upstream. Sidecar telemetry alerts immediately.</div>
+          <div class="rb kr-only">분기가 cache_read = 0을 보고하면, 상류에서 접두사 불변성이 깨진 것입니다. 사이드카 텔레메트리가 즉시 경보합니다.</div>
+        </div>
+      </div>
+      <div style="margin-top:32px;padding-top:24px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <a class="tb-btn primary" href="Session Viewer.html" style="padding:10px 16px;font-size:12.5px"><span class="en-only">Open the Session Viewer →</span><span class="kr-only">Session Viewer 열기 →</span></a>
+        <span style="font-family:var(--mono);font-size:10.5px;color:var(--ink-3)">⌘B · <span class="en-only">branch any session</span><span class="kr-only">세션 분기</span></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div><span class="en-only">Adapted from internal architecture report — Session Viewer · v0.4.2</span><span class="kr-only">내부 아키텍처 보고서 발췌 — Session Viewer · v0.4.2</span></div>
+  <div>session-viewer · concept · v0.4.2 · 2026</div>
+</footer>
+
+<script>
+  (function() {
+    var body = document.body;
+    var langWrap = document.getElementById('lang');
+    var btns = langWrap.querySelectorAll('button');
+    btns.forEach(function(b) {
+      b.addEventListener('click', function() {
+        var l = b.getAttribute('data-lang');
+        body.dataset.lang = l;
+        btns.forEach(function(x) { x.classList.toggle('on', x === b); });
+      });
+    });
+    var theme = document.getElementById('theme');
+    theme.addEventListener('click', function() {
+      var cur = body.dataset.theme === 'dark' ? 'light' : 'dark';
+      body.dataset.theme = cur;
+      theme.textContent = cur === 'dark' ? '☾' : '☼';
+    });
+  })();
+</script>
+
+</body>
+</html>

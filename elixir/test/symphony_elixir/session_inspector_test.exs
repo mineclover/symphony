@@ -4,6 +4,38 @@ defmodule SymphonyElixir.SessionInspectorTest do
   alias SymphonyElixir.AgentSessionInspection
   alias SymphonyElixir.Codex.SessionInspectionAdapter
 
+  test "summary_text accepts codex event agent messages and task completion fallback" do
+    assert SessionInspectionAdapter.summary_text(%{
+             events: [
+               %{
+                 payload: %{
+                   "method" => "codex/event/agent_message",
+                   "params" => %{"msg" => %{"type" => "agent_message", "message" => "commentary", "phase" => "commentary"}}
+                 }
+               },
+               %{
+                 payload: %{
+                   "method" => "codex/event/agent_message",
+                   "params" => %{
+                     "msg" => %{"type" => "agent_message", "message" => "final observer answer", "phase" => "final_answer"}
+                   }
+                 }
+               }
+             ]
+           }) == "final observer answer"
+
+    assert SessionInspectionAdapter.summary_text(%{
+             events: [
+               %{
+                 payload: %{
+                   "method" => "codex/event/task_complete",
+                   "params" => %{"msg" => %{"last_agent_message" => "last agent message"}}
+                 }
+               }
+             ]
+           }) == "last agent message"
+  end
+
   test "summarize forks a live app-server thread and returns the observer final answer" do
     test_root =
       Path.join(
@@ -39,12 +71,12 @@ defmodule SymphonyElixir.SessionInspectorTest do
             printf '%s\\n' '{"id":1,"result":{}}'
             ;;
           2)
-            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-source"}}}'
             ;;
           3)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-source"}}}'
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-source"}}}'
             ;;
           4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-source"}}}'
             printf '%s\\n' '{"method":"turn/completed"}'
             ;;
           5)
@@ -117,8 +149,8 @@ defmodule SymphonyElixir.SessionInspectorTest do
         assert comment_body =~ "outcome: changed tests"
         refute comment_body =~ "intermediate observer note"
 
-        assert :ok = AgentSessionInspection.create_comment(summary, issue.id)
-        assert_receive {:memory_tracker_comment, "issue-inspect", ^comment_body}
+        assert {:ok, comment_id} = AgentSessionInspection.create_comment(summary, issue.id)
+        assert_receive {:memory_tracker_comment, "issue-inspect", ^comment_body, ^comment_id}
 
         trace = File.read!(trace_file)
         lines = String.split(trace, "\n", trim: true)
@@ -129,7 +161,9 @@ defmodule SymphonyElixir.SessionInspectorTest do
 
                    payload["method"] == "thread/fork" &&
                      get_in(payload, ["params", "threadId"]) == "thread-source" &&
-                     get_in(payload, ["params", "ephemeral"]) == true
+                     get_in(payload, ["params", "ephemeral"]) == true &&
+                     get_in(payload, ["params", "approvalPolicy"]) == "on-request" &&
+                     get_in(payload, ["params", "sandbox"]) == "read-only"
                  else
                    false
                  end
@@ -139,7 +173,14 @@ defmodule SymphonyElixir.SessionInspectorTest do
           Enum.find(lines, fn line ->
             if String.starts_with?(line, "JSON:") do
               payload = line |> String.trim_leading("JSON:") |> Jason.decode!()
-              payload["method"] == "turn/start" && get_in(payload, ["params", "threadId"]) == "thread-observer"
+
+              payload["method"] == "turn/start" &&
+                get_in(payload, ["params", "threadId"]) == "thread-observer" &&
+                get_in(payload, ["params", "approvalPolicy"]) == "on-request" &&
+                get_in(payload, ["params", "sandboxPolicy"]) == %{
+                  "type" => "readOnly",
+                  "networkAccess" => false
+                }
             else
               false
             end

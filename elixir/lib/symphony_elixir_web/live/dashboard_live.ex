@@ -40,11 +40,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <section class="dashboard-shell">
-      <header class="hero-card">
+    <section class="dashboard-shell ds-shell">
+      <header class="hero-card ds-panel ds-panel-hero">
         <div class="hero-grid">
           <div>
-            <p class="eyebrow">
+            <p class="eyebrow ds-kicker">
               Symphony Observability
             </p>
             <h1 class="hero-title">
@@ -56,11 +56,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </div>
 
           <div class="status-stack">
-            <span class="status-badge status-badge-live">
+            <span class="status-badge status-badge-live ds-pill ds-pill-cache">
               <span class="status-badge-dot"></span>
               Live
             </span>
-            <span class="status-badge status-badge-offline">
+            <span class="status-badge status-badge-offline ds-pill">
               <span class="status-badge-dot"></span>
               Offline
             </span>
@@ -69,7 +69,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
       </header>
 
       <%= if @payload[:error] do %>
-        <section class="error-card">
+        <section class="error-card ds-panel">
           <h2 class="error-title">
             Snapshot unavailable
           </h2>
@@ -79,19 +79,19 @@ defmodule SymphonyElixirWeb.DashboardLive do
         </section>
       <% else %>
         <section class="metric-grid">
-          <article class="metric-card">
+          <article class="metric-card ds-panel">
             <p class="metric-label">Running</p>
             <p class="metric-value numeric"><%= @payload.counts.running %></p>
             <p class="metric-detail">Active issue sessions in the current runtime.</p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card ds-panel">
             <p class="metric-label">Retrying</p>
             <p class="metric-value numeric"><%= @payload.counts.retrying %></p>
             <p class="metric-detail">Issues waiting for the next retry window.</p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card ds-panel">
             <p class="metric-label">Total tokens</p>
             <p class="metric-value numeric"><%= format_int(@payload.codex_totals.total_tokens) %></p>
             <p class="metric-detail numeric">
@@ -99,14 +99,25 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card ds-panel">
             <p class="metric-label">Runtime</p>
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
             <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
           </article>
         </section>
 
-        <section class="section-card">
+        <section class="view-strip ds-tabs" aria-label="Dashboard views">
+          <a class="ds-tab" href="#symphony-runtime">
+            <span>Runtime</span>
+            <small>Original Symphony workers</small>
+          </a>
+          <a class="ds-tab" href="/sessions">
+            <span>Session observer</span>
+            <small>Cloned session summaries</small>
+          </a>
+        </section>
+
+        <section class="section-card ds-panel">
           <div class="section-header">
             <div>
               <h2 class="section-title">Rate limits</h2>
@@ -114,14 +125,14 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </div>
           </div>
 
-          <pre class="code-panel"><%= pretty_value(@payload.rate_limits) %></pre>
+          <pre class="code-panel ds-code"><%= pretty_value(@payload.rate_limits) %></pre>
         </section>
 
-        <section class="section-card">
+        <section class="section-card ds-panel" id="symphony-runtime">
           <div class="section-header">
             <div>
               <h2 class="section-title">Running sessions</h2>
-              <p class="section-copy">Active issues, last known agent activity, and token usage.</p>
+              <p class="section-copy">Original Symphony worker orchestration: active issues, agent activity, and token usage.</p>
             </div>
           </div>
 
@@ -206,11 +217,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <% end %>
         </section>
 
-        <section class="section-card">
+        <section class="section-card ds-panel">
           <div class="section-header">
             <div>
               <h2 class="section-title">Retry queue</h2>
-              <p class="section-copy">Issues waiting for the next retry window.</p>
+              <p class="section-copy">Original Symphony retry/backoff state for issue workers.</p>
             </div>
           </div>
 
@@ -244,6 +255,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </div>
           <% end %>
         </section>
+
       <% end %>
     </section>
     """

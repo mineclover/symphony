@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
+  alias SymphonyElixir.Orchestrator
   alias SymphonyElixirWeb.{Endpoint, Presenter}
 
   @spec state(Conn.t(), map()) :: Conn.t()
@@ -34,6 +35,30 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
       {:error, :unavailable} ->
         error_response(conn, 503, "orchestrator_unavailable", "Orchestrator is unavailable")
+    end
+  end
+
+  @spec ingest_session_inspection(Conn.t(), map()) :: Conn.t()
+  def ingest_session_inspection(conn, params) do
+    issue_id = Map.get(params, "issue_id") || get_in(params, ["source_session", "id"])
+
+    if is_binary(issue_id) and issue_id != "" do
+      summary =
+        params
+        |> Map.drop(["issue_id"])
+        |> Map.put_new("platform", "external_ingest")
+
+      case Orchestrator.ingest_session_inspection(orchestrator(), issue_id, summary) do
+        :ok ->
+          conn
+          |> put_status(202)
+          |> json(%{accepted: true, issue_id: issue_id})
+
+        :unavailable ->
+          error_response(conn, 503, "orchestrator_unavailable", "Orchestrator is unavailable")
+      end
+    else
+      error_response(conn, 422, "invalid_session_inspection", "issue_id or source_session.id is required")
     end
   end
 

@@ -35,10 +35,11 @@ defmodule SymphonyElixir.Tracker.Memory do
      end)}
   end
 
-  @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
+  @spec create_comment(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def create_comment(issue_id, body) do
-    send_event({:memory_tracker_comment, issue_id, body})
-    :ok
+    comment_id = "memory-comment-#{System.unique_integer([:positive])}"
+    send_event({:memory_tracker_comment, issue_id, body, comment_id})
+    {:ok, comment_id}
   end
 
   @spec update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}

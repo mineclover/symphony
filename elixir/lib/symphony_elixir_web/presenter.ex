@@ -185,25 +185,32 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp session_inspection_payload(summary) when is_map(summary) do
     %{
-      observer: Map.get(summary, :observer),
-      platform: Map.get(summary, :platform),
-      issue_id: Map.get(summary, :issue_id),
-      issue_identifier: Map.get(summary, :issue_identifier),
-      source_turn_number: Map.get(summary, :source_turn_number),
-      source_session: Map.get(summary, :source_session),
-      observer_session: Map.get(summary, :observer_session),
-      observer_turn: observer_turn_payload(Map.get(summary, :observer_turn)),
-      summary_text: Map.get(summary, :summary_text),
-      cache_analysis: cache_analysis_payload(Map.get(summary, :cache_analysis)),
-      updated_at: iso8601(Map.get(summary, :updated_at))
+      inspection_id: map_get(summary, :inspection_id),
+      observer: map_get(summary, :observer),
+      platform: map_get(summary, :platform),
+      issue_id: map_get(summary, :issue_id),
+      issue_identifier: map_get(summary, :issue_identifier),
+      source_turn_number: map_get(summary, :source_turn_number),
+      source_session: map_get(summary, :source_session),
+      observer_session: map_get(summary, :observer_session),
+      observer_turn: observer_turn_payload(map_get(summary, :observer_turn)),
+      summary_text: map_get(summary, :summary_text),
+      status: map_get(summary, :status),
+      latest_user_query: map_get(summary, :latest_user_query),
+      error: map_get(summary, :error),
+      cache_analysis: cache_analysis_payload(map_get(summary, :cache_analysis)),
+      observer_cache_analysis: cache_analysis_payload(map_get(summary, :observer_cache_analysis)),
+      comment_id: map_get(summary, :comment_id),
+      comment_status: map_get(summary, :comment_status),
+      updated_at: iso8601(map_get(summary, :updated_at))
     }
   end
 
   defp observer_turn_payload(observer_turn) when is_map(observer_turn) do
     %{
-      session_id: Map.get(observer_turn, :session_id),
-      thread_id: Map.get(observer_turn, :thread_id),
-      turn_id: Map.get(observer_turn, :turn_id)
+      session_id: map_get(observer_turn, :session_id),
+      thread_id: map_get(observer_turn, :thread_id),
+      turn_id: map_get(observer_turn, :turn_id)
     }
   end
 
@@ -211,10 +218,10 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp cache_analysis_payload(cache_analysis) when is_map(cache_analysis) do
     %{
-      cache_hit?: Map.get(cache_analysis, :cache_hit?),
-      cached_input_tokens: Map.get(cache_analysis, :cached_input_tokens),
-      input_tokens: Map.get(cache_analysis, :input_tokens),
-      cache_hit_ratio: Map.get(cache_analysis, :cache_hit_ratio)
+      cache_hit?: map_get(cache_analysis, :cache_hit?),
+      cached_input_tokens: map_get(cache_analysis, :cached_input_tokens),
+      input_tokens: map_get(cache_analysis, :input_tokens),
+      cache_hit_ratio: map_get(cache_analysis, :cache_hit_ratio)
     }
   end
 
@@ -238,5 +245,13 @@ defmodule SymphonyElixirWeb.Presenter do
     |> DateTime.to_iso8601()
   end
 
+  defp iso8601(datetime) when is_binary(datetime), do: datetime
   defp iso8601(_datetime), do: nil
+
+  defp map_get(map, key) when is_map(map) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
 end

@@ -42,10 +42,10 @@ defmodule SymphonyElixir.Codex.AppServer do
     worker_host = Keyword.get(opts, :worker_host)
 
     with {:ok, expanded_workspace} <- validate_workspace_cwd(workspace, worker_host),
-         {:ok, port} <- start_port(expanded_workspace, worker_host) do
+         {:ok, port} <- start_port(expanded_workspace, worker_host, opts) do
       metadata = port_metadata(port, worker_host)
 
-      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
+      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
            {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies) do
         {:ok,
          %{
@@ -151,24 +151,39 @@ defmodule SymphonyElixir.Codex.AppServer do
         } = session,
         opts \\ []
       ) do
+    approval_policy = Keyword.get(opts, :approval_policy, approval_policy)
+    thread_sandbox = Keyword.get(opts, :thread_sandbox, thread_sandbox)
+    turn_sandbox_policy = Keyword.get(opts, :turn_sandbox_policy, Map.get(session, :turn_sandbox_policy))
     persist_extended_history = Keyword.get(opts, :persist_extended_history, true)
 
     send_message(port, %{
       "method" => "thread/fork",
       "id" => @thread_fork_id,
-      "params" => %{
-        "threadId" => thread_id,
-        "cwd" => workspace,
-        "approvalPolicy" => approval_policy,
-        "sandbox" => thread_sandbox,
-        "ephemeral" => Keyword.get(opts, :ephemeral, true),
-        "persistExtendedHistory" => persist_extended_history
-      }
+      "params" =>
+        %{
+          "threadId" => thread_id,
+          "cwd" => workspace,
+          "approvalPolicy" => approval_policy,
+          "sandbox" => thread_sandbox,
+          "ephemeral" => Keyword.get(opts, :ephemeral, true),
+          "persistExtendedHistory" => persist_extended_history
+        }
+        |> maybe_put_fork_param("path", Keyword.get(opts, :path))
+        |> maybe_put_fork_param("model", Keyword.get(opts, :model))
+        |> maybe_put_fork_param("modelProvider", Keyword.get(opts, :model_provider) || Keyword.get(opts, :modelProvider))
     })
 
     case await_response(port, @thread_fork_id) do
       {:ok, %{"thread" => %{"id" => forked_thread_id}}} ->
-        {:ok, %{session | thread_id: forked_thread_id}}
+        {:ok,
+         %{
+           session
+           | approval_policy: approval_policy,
+             auto_approve_requests: approval_policy == "never",
+             thread_id: forked_thread_id,
+             thread_sandbox: thread_sandbox,
+             turn_sandbox_policy: turn_sandbox_policy
+         }}
 
       {:ok, payload} ->
         {:error, {:invalid_thread_fork_payload, payload}}
@@ -225,8 +240,13 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace, nil) do
+  defp start_port(workspace, nil, opts) do
     executable = System.find_executable("bash")
+
+    command =
+      opts
+      |> Keyword.get(:command, Config.settings!().codex.command)
+      |> local_launch_command()
 
     if is_nil(executable) do
       {:error, :bash_not_found}
@@ -238,7 +258,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+            args: [~c"-lc", String.to_charlist(command)],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
@@ -248,15 +268,26 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace, worker_host) when is_binary(worker_host) do
-    remote_command = remote_launch_command(workspace)
+  defp start_port(workspace, worker_host, opts) when is_binary(worker_host) do
+    remote_command = remote_launch_command(workspace, Keyword.get(opts, :command, Config.settings!().codex.command))
     SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
   end
 
-  defp remote_launch_command(workspace) when is_binary(workspace) do
+  defp local_launch_command(command) when is_binary(command) do
+    if String.trim(command) == "codex app-server" do
+      case System.find_executable("codex") do
+        executable when is_binary(executable) -> "#{shell_escape(executable)} app-server"
+        nil -> command
+      end
+    else
+      command
+    end
+  end
+
+  defp remote_launch_command(workspace, command) when is_binary(workspace) and is_binary(command) do
     [
       "cd #{shell_escape(workspace)}",
-      "exec #{Config.settings!().codex.command}"
+      "exec #{command}"
     ]
     |> Enum.join(" && ")
   end
@@ -301,12 +332,12 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp session_policies(workspace, nil) do
-    Config.codex_runtime_settings(workspace)
+  defp session_policies(workspace, nil, opts) do
+    Config.codex_runtime_settings(workspace, opts)
   end
 
-  defp session_policies(workspace, worker_host) when is_binary(worker_host) do
-    Config.codex_runtime_settings(workspace, remote: true)
+  defp session_policies(workspace, worker_host, opts) when is_binary(worker_host) do
+    Config.codex_runtime_settings(workspace, Keyword.put(opts, :remote, true))
   end
 
   defp do_start_session(port, workspace, session_policies) do
@@ -406,7 +437,11 @@ defmodule SymphonyElixir.Codex.AppServer do
     case Jason.decode(payload_string) do
       {:ok, %{"method" => "turn/completed"} = payload} ->
         emit_turn_event(on_message, :turn_completed, payload, payload_string, port, payload)
-        {:ok, :turn_completed}
+
+        case turn_completed_error(payload) do
+          nil -> {:ok, :turn_completed}
+          reason -> {:error, {:turn_failed, reason}}
+        end
 
       {:ok, %{"method" => "turn/failed", "params" => _} = payload} ->
         emit_turn_event(
@@ -489,6 +524,17 @@ defmodule SymphonyElixir.Codex.AppServer do
       metadata_from_message(port, payload)
     )
   end
+
+  defp turn_completed_error(%{"params" => %{"turn" => %{"status" => "failed"} = turn}}) do
+    Map.get(turn, "error") || turn
+  end
+
+  defp turn_completed_error(%{"params" => %{"turn" => %{"error" => error}}}) when not is_nil(error), do: error
+  defp turn_completed_error(_payload), do: nil
+
+  defp maybe_put_fork_param(params, _key, value) when is_nil(value), do: params
+  defp maybe_put_fork_param(params, _key, ""), do: params
+  defp maybe_put_fork_param(params, key, value), do: Map.put(params, key, value)
 
   defp handle_turn_method(
          port,

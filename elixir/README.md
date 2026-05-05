@@ -113,6 +113,9 @@ Title: {{ issue.title }} Body: {{ issue.description }}
 Notes:
 
 - If a value is missing, defaults are used.
+- `tracker.kind: none` starts Symphony in monitor-only mode. In this mode Symphony does not poll
+  Linear or any issue tracker, but the dashboard/API can still show runtime state and persisted
+  session inspection summaries.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`
@@ -166,18 +169,55 @@ point. It runs the observer prompt only on the forked thread and returns the sou
 observer thread id, observer session id, collected observer events, and best-effort final summary
 text.
 
-Inspection results include `cache_analysis`, derived from cached-token usage fields when the
-underlying agent protocol emits them. `SymphonyElixir.AgentSessionInspection.comment_body/1` renders
-the summary, source/observer session identities, and cache result into a tracker comment body, and
-`create_comment/3` posts that body through the configured tracker adapter.
+Inspection results include cache metadata when the underlying agent protocol emits cached-token
+usage fields. `cache_analysis` describes the source session signal captured from that platform's
+logs/history, while `observer_cache_analysis` describes the actual observer summary turn when the
+adapter can collect observer token-usage events. `SymphonyElixir.AgentSessionInspection.comment_body/1`
+renders the summary, source/observer session identities, and cache result into a tracker comment
+body, and `create_comment/3` posts that body through the configured tracker adapter.
 
 When `session_inspection.enabled` is true, Symphony runs the observer summary after each successful
 agent turn while the source app-server session is still alive. When
 `session_inspection.comment_on_completion` is true, it also posts the rendered summary comment to the
-issue tracker.
+issue tracker and records the returned tracker comment id when the adapter provides one.
+
+The orchestrator keeps per-issue inspection history instead of replacing older summaries. New
+summaries are appended to a local JSONL history file at
+`<workspace.root>/.symphony/session_inspections.jsonl`; tests and embedded deployments can override
+that path with the `:session_inspection_store_file` application env. The `/api/v1/state` payload and
+dashboard expose the flattened history, while each running issue still carries its latest summary for
+quick issue-level status.
+
+Monitor-only session discovery is standardized behind `SymphonyElixir.ExternalSessionAdapter`.
+Adapters provide platform name, cursor-based event reads, source-session identity, source cache
+metadata, issue/inspection ids, and the isolated observer summary execution. The generic
+`SymphonyElixir.ExternalSessionMonitor` handles pending/success/failure payloads, dedupes repeated
+updates for the same source session, persists JSONL history, and exposes the result to the dashboard.
+Codex is the first adapter; Gemini, Claude Code, OpenCode, or other cached CLIs should implement the
+same behaviour instead of adding platform-specific monitor logic to the dashboard/orchestrator.
+
+For local Codex CLI, monitor-only mode enables `SymphonyElixir.Codex.ExternalSessionMonitor` when
+`session_inspection.enabled` is true. It starts from the current end of `~/.codex/history.jsonl`, so
+old sessions are ignored. For each new history entry it resolves the matching
+`~/.codex/sessions/**/rollout-*.jsonl`, records the source session id, mtime-derived status, cwd,
+latest user query, model metadata, and cached-token signal. It then starts a separate Codex
+app-server, forks the collected rollout path with `thread/fork(path: ...)`, and sends the read-only
+summary prompt to the forked observer thread. The observer prompt includes the marker
+`SYMPHONY_EXTERNAL_SESSION_OBSERVER` so observer-generated history is not re-ingested.
+
+External producers can also push summaries directly:
+
+```sh
+curl -X POST http://127.0.0.1:5180/api/v1/session-inspections \
+  -H 'content-type: application/json' \
+  -d '{"issue_id":"codex:external","source_session":{"id":"external"},"summary_text":"..."}'
+```
 
 Observer turns disable Symphony client-side dynamic tools by default. Callers can pass
-`:tool_executor` when a trusted inspection flow needs tool access.
+`:tool_executor` when a trusted inspection flow needs tool access. Codex observer sessions also
+default to `approval_policy: on-request`, `thread_sandbox: read-only`, and a read-only turn sandbox
+so summary failures or unsafe tool requests do not mutate the source workspace or fail the worker
+run.
 
 ## Web dashboard
 

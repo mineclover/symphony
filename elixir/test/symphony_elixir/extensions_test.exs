@@ -6,6 +6,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
+  alias SymphonyElixir.Tracker.None
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -74,6 +75,10 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     def handle_call(:request_refresh, _from, state) do
       {:reply, Keyword.get(state, :refresh, :unavailable), state}
+    end
+
+    def handle_cast({:ingest_session_inspection, _issue_id, _summary}, state) do
+      {:noreply, state}
     end
   end
 
@@ -192,14 +197,22 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
+    assert {:ok, memory_comment_id} = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
     assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
-    assert_receive {:memory_tracker_comment, "issue-1", "comment"}
+    assert_receive {:memory_tracker_comment, "issue-1", "comment", ^memory_comment_id}
     assert_receive {:memory_tracker_state_update, "issue-1", "Done"}
 
     Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
-    assert :ok = Memory.create_comment("issue-1", "quiet")
+    assert {:ok, _comment_id} = Memory.create_comment("issue-1", "quiet")
     assert :ok = Memory.update_issue_state("issue-1", "Quiet")
+
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "none")
+    assert SymphonyElixir.Tracker.adapter() == None
+    assert {:ok, []} = SymphonyElixir.Tracker.fetch_candidate_issues()
+    assert {:ok, []} = SymphonyElixir.Tracker.fetch_issues_by_states(["Todo"])
+    assert {:ok, []} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert {:ok, nil} = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
+    assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
@@ -219,10 +232,10 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     Process.put(
       {FakeLinearClient, :graphql_result},
-      {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+      {:ok, %{"data" => %{"commentCreate" => %{"success" => true, "comment" => %{"id" => "comment-1"}}}}}
     )
 
-    assert :ok = Adapter.create_comment("issue-1", "hello")
+    assert {:ok, "comment-1"} = Adapter.create_comment("issue-1", "hello")
     assert_receive {:graphql_called, create_comment_query, %{body: "hello", issueId: "issue-1"}}
     assert create_comment_query =~ "commentCreate"
 
@@ -430,6 +443,28 @@ defmodule SymphonyElixir.ExtensionsTest do
              json_response(conn, 202)
   end
 
+  test "phoenix observability api accepts external session inspection ingest" do
+    snapshot = static_snapshot()
+    orchestrator_name = Module.concat(__MODULE__, :InspectionIngestOrchestrator)
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    conn =
+      post(build_conn(), "/api/v1/session-inspections", %{
+        "issue_id" => "codex:session-1",
+        "source_session" => %{"id" => "session-1"},
+        "summary_text" => "external summary"
+      })
+
+    assert json_response(conn, 202) == %{"accepted" => true, "issue_id" => "codex:session-1"}
+  end
+
   test "phoenix observability api preserves 405, 404, and unavailable behavior" do
     unavailable_orchestrator = Module.concat(__MODULE__, :UnavailableOrchestrator)
     start_test_endpoint(orchestrator: unavailable_orchestrator, snapshot_timeout_ms: 5)
@@ -507,9 +542,18 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
     assert dashboard_css =~ ":root {"
+    assert dashboard_css =~ "--surface-panel:"
+    assert dashboard_css =~ ".ds-panel"
+    assert dashboard_css =~ ".ds-pill-cache"
+    assert dashboard_css =~ ".ds-session-card"
+    assert dashboard_css =~ ".session-viewer-shell"
     assert dashboard_css =~ ".status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
+
+    sessions_html = html_response(get(build_conn(), "/sessions"), 200)
+    assert sessions_html =~ "/dashboard.css"
+    assert sessions_html =~ "Session summaries"
 
     phoenix_html_js = response(get(build_conn(), "/vendor/phoenix_html/phoenix_html.js"), 200)
     assert phoenix_html_js =~ "phoenix.link.click"
@@ -525,7 +569,23 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "dashboard liveview renders and refreshes over pubsub" do
     orchestrator_name = Module.concat(__MODULE__, :DashboardOrchestrator)
-    snapshot = static_snapshot()
+
+    snapshot =
+      static_snapshot()
+      |> Map.put(:session_inspections, [
+        %{
+          issue_id: "issue-http",
+          issue_identifier: "MT-HTTP",
+          source_turn_number: 3,
+          observer_turn: %{turn_id: "observer-turn"},
+          summary_text: "outcome: dashboard summary",
+          cache_analysis: %{cache_hit?: true, cache_hit_ratio: 0.5},
+          observer_cache_analysis: %{cache_hit?: true, cache_hit_ratio: 0.75},
+          comment_status: :created,
+          comment_id: "comment-dashboard",
+          updated_at: DateTime.utc_now()
+        }
+      ])
 
     {:ok, orchestrator_pid} =
       StaticOrchestrator.start_link(
@@ -551,6 +611,13 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Offline"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
+    assert html =~ "Original Symphony workers"
+    assert html =~ "Session observer"
+    assert html =~ "Cloned session summaries"
+    assert html =~ ~s(href="/sessions")
+    assert html =~ "ds-shell"
+    assert html =~ "ds-tab"
+    refute html =~ "Observer result"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -608,6 +675,57 @@ defmodule SymphonyElixir.ExtensionsTest do
     {:ok, _view, html} = live(build_conn(), "/")
     assert html =~ "Snapshot unavailable"
     assert html =~ "snapshot_unavailable"
+  end
+
+  test "session viewer liveview renders observer summaries" do
+    orchestrator_name = Module.concat(__MODULE__, :SessionViewerOrchestrator)
+
+    snapshot =
+      static_snapshot()
+      |> Map.put(:session_inspections, [
+        %{
+          inspection_id: "codex:session-1:latest",
+          platform: "codex",
+          issue_id: "codex:session-1",
+          issue_identifier: "CODEX-session-1",
+          source_session: %{
+            id: "session-1",
+            model: "gpt-5.5",
+            status: "active_recently",
+            path: "/tmp/session-1.jsonl"
+          },
+          observer_session: %{clone_strategy: :codex_thread_fork_path, thread_id: "observer-thread"},
+          observer_turn: %{turn_id: "observer-turn"},
+          summary_text: "status: observer summary",
+          latest_user_query: "새 세션 명령",
+          cache_analysis: %{cache_hit?: true, cache_hit_ratio: 0.5},
+          observer_cache_analysis: %{cache_hit?: true, cache_hit_ratio: 0.75},
+          observer: true,
+          updated_at: DateTime.utc_now()
+        }
+      ])
+
+    {:ok, _pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, _view, html} = live(build_conn(), "/sessions")
+
+    assert html =~ "Session summaries"
+    assert html =~ "Runtime dashboard"
+    assert html =~ "Observer summaries"
+    assert html =~ "CODEX-session-1"
+    assert html =~ "status: observer summary"
+    assert html =~ "Source cache 50%"
+    assert html =~ "Observer cache 75%"
+    assert html =~ "Raw session details"
+    assert html =~ "codex_thread_fork_path"
+    assert html =~ "session-viewer-shell"
+    assert html =~ "ds-session-card"
   end
 
   test "http server serves embedded assets, accepts form posts, and rejects invalid hosts" do
