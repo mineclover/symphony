@@ -4,7 +4,9 @@ defmodule SymphonyElixir.AgentRunner do
   """
 
   require Logger
+  alias SymphonyElixir.AgentSessionInspection
   alias SymphonyElixir.Codex.AppServer
+  alias SymphonyElixir.Codex.SessionInspectionAdapter
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
   @type worker_host :: String.t() | nil
@@ -101,6 +103,8 @@ defmodule SymphonyElixir.AgentRunner do
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
+      maybe_inspect_session(app_session, issue, codex_update_recipient, opts, turn_number)
+
       case continue_with_issue?(issue, issue_state_fetcher) do
         {:continue, refreshed_issue} when turn_number < max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
@@ -143,6 +147,60 @@ defmodule SymphonyElixir.AgentRunner do
     - Focus on the remaining ticket work and do not end the turn while the issue stays active unless you are truly blocked.
     """
   end
+
+  defp maybe_inspect_session(app_session, issue, recipient, opts, turn_number) do
+    if session_inspection_enabled?(opts) do
+      inspection_opts = Keyword.get(opts, :session_inspection_opts, [])
+
+      case AgentSessionInspection.summarize(SessionInspectionAdapter, app_session, issue, inspection_opts) do
+        {:ok, summary} ->
+          summary = Map.put(summary, :source_turn_number, turn_number)
+          maybe_create_session_inspection_comment(summary, issue, opts)
+          send_session_inspection_update(recipient, issue, summary)
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Session inspection failed for #{issue_context(issue)} turn=#{turn_number}: #{inspect(reason)}")
+          send_session_inspection_update(recipient, issue, %{error: inspect(reason), source_turn_number: turn_number})
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp session_inspection_enabled?(opts) do
+    Keyword.get(opts, :session_inspection_enabled, Config.settings!().session_inspection.enabled)
+  end
+
+  defp maybe_create_session_inspection_comment(summary, issue, opts) do
+    comment? =
+      Keyword.get(
+        opts,
+        :session_inspection_comment_on_completion,
+        Config.settings!().session_inspection.comment_on_completion
+      )
+
+    if comment? and is_binary(issue.id) do
+      case AgentSessionInspection.create_comment(summary, issue.id) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Session inspection comment failed for #{issue_context(issue)}: #{inspect(reason)}")
+      end
+    else
+      :ok
+    end
+  end
+
+  defp send_session_inspection_update(recipient, %Issue{id: issue_id}, summary)
+       when is_binary(issue_id) and is_pid(recipient) and is_map(summary) do
+    send(recipient, {:session_inspection_update, issue_id, summary})
+    :ok
+  end
+
+  defp send_session_inspection_update(_recipient, _issue, _summary), do: :ok
 
   defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do

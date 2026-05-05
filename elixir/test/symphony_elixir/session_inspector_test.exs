@@ -1,7 +1,8 @@
 defmodule SymphonyElixir.SessionInspectorTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.SessionInspector
+  alias SymphonyElixir.AgentSessionInspection
+  alias SymphonyElixir.Codex.SessionInspectionAdapter
 
   test "summarize forks a live app-server thread and returns the observer final answer" do
     test_root =
@@ -51,6 +52,8 @@ defmodule SymphonyElixir.SessionInspectorTest do
             ;;
           6)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-observer"}}}'
+            printf '%s\\n' '{"method":"item/completed","params":{"threadId":"thread-observer","turnId":"turn-observer","item":{"id":"item-commentary","type":"agentMessage","phase":"commentary","text":"intermediate observer note"}}}'
+            printf '%s\\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-observer","tokenUsage":{"total":{"inputTokens":1000,"cachedInputTokens":750,"outputTokens":80,"totalTokens":1080}}}}'
             printf '%s\\n' '{"method":"item/completed","params":{"threadId":"thread-observer","turnId":"turn-observer","item":{"id":"item-summary","type":"agentMessage","phase":"final_answer","text":"outcome: changed tests\\nwork_units: one implementation task"}}}'
             printf '%s\\n' '{"method":"turn/completed"}'
             exit 0
@@ -66,8 +69,11 @@ defmodule SymphonyElixir.SessionInspectorTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
+        tracker_kind: "memory",
         codex_command: "#{codex_binary} app-server"
       )
+
+      Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
 
       issue = %Issue{
         id: "issue-inspect",
@@ -85,13 +91,34 @@ defmodule SymphonyElixir.SessionInspectorTest do
         assert {:ok, %{session_id: "thread-source-turn-source"}} =
                  AppServer.run_turn(session, "Do source work", issue)
 
-        assert {:ok, summary} = SessionInspector.summarize(session, issue)
+        assert {:ok, summary} =
+                 AgentSessionInspection.summarize(SessionInspectionAdapter, session, issue)
 
-        assert summary.source_thread_id == "thread-source"
-        assert summary.observer_thread_id == "thread-observer"
-        assert summary.observer_session_id == "thread-observer-turn-observer"
+        assert summary.observer == true
+        assert summary.platform == :codex_app_server
+        assert summary.source_session == %{thread_id: "thread-source"}
+        assert summary.observer_session == %{thread_id: "thread-observer"}
+        assert summary.observer_turn.session_id == "thread-observer-turn-observer"
         assert summary.summary_text =~ "outcome: changed tests"
+        refute summary.summary_text =~ "intermediate observer note"
         assert Enum.any?(summary.events, &(&1.event == :turn_completed))
+        assert Enum.any?(summary.events, &(&1.session_id == "thread-observer-turn-observer"))
+
+        assert Map.fetch!(summary.cache_analysis, :cache_hit?) == true
+        assert summary.cache_analysis.cached_input_tokens == 750
+        assert summary.cache_analysis.input_tokens == 1000
+        assert summary.cache_analysis.cache_hit_ratio == 0.75
+
+        comment_body = AgentSessionInspection.comment_body(summary)
+        assert comment_body =~ "Symphony session summary"
+        assert comment_body =~ "Source session: thread_id=thread-source"
+        assert comment_body =~ "Observer session: thread_id=thread-observer"
+        assert comment_body =~ "Cache: hit cached_input_tokens=750 input_tokens=1000 ratio=0.75"
+        assert comment_body =~ "outcome: changed tests"
+        refute comment_body =~ "intermediate observer note"
+
+        assert :ok = AgentSessionInspection.create_comment(summary, issue.id)
+        assert_receive {:memory_tracker_comment, "issue-inspect", ^comment_body}
 
         trace = File.read!(trace_file)
         lines = String.split(trace, "\n", trim: true)

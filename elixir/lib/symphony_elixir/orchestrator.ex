@@ -37,6 +37,7 @@ defmodule SymphonyElixir.Orchestrator do
       completed: MapSet.new(),
       claimed: MapSet.new(),
       retry_attempts: %{},
+      session_inspections: %{},
       codex_totals: nil,
       codex_rate_limits: nil
     ]
@@ -202,6 +203,30 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_info({:codex_worker_update, _issue_id, _update}, state), do: {:noreply, state}
+
+  def handle_info(
+        {:session_inspection_update, issue_id, summary},
+        %{running: running, session_inspections: session_inspections} = state
+      )
+      when is_binary(issue_id) and is_map(summary) do
+    running_entry = Map.get(running, issue_id)
+    enriched_summary = enrich_session_inspection_summary(summary, issue_id, running_entry)
+
+    running =
+      case running_entry do
+        nil -> running
+        entry -> Map.put(running, issue_id, Map.put(entry, :session_inspection, enriched_summary))
+      end
+
+    state = %{
+      state
+      | running: running,
+        session_inspections: Map.put(session_inspections, issue_id, enriched_summary)
+    }
+
+    notify_dashboard()
+    {:noreply, state}
+  end
 
   def handle_info({:retry_issue, issue_id, retry_token}, state) do
     result =
@@ -1112,17 +1137,18 @@ defmodule SymphonyElixir.Orchestrator do
           state: metadata.issue.state,
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
-          session_id: metadata.session_id,
-          codex_app_server_pid: metadata.codex_app_server_pid,
-          codex_input_tokens: metadata.codex_input_tokens,
-          codex_output_tokens: metadata.codex_output_tokens,
-          codex_total_tokens: metadata.codex_total_tokens,
+          session_id: Map.get(metadata, :session_id),
+          codex_app_server_pid: Map.get(metadata, :codex_app_server_pid),
+          codex_input_tokens: Map.get(metadata, :codex_input_tokens, 0),
+          codex_output_tokens: Map.get(metadata, :codex_output_tokens, 0),
+          codex_total_tokens: Map.get(metadata, :codex_total_tokens, 0),
           turn_count: Map.get(metadata, :turn_count, 0),
-          started_at: metadata.started_at,
-          last_codex_timestamp: metadata.last_codex_timestamp,
-          last_codex_message: metadata.last_codex_message,
-          last_codex_event: metadata.last_codex_event,
-          runtime_seconds: running_seconds(metadata.started_at, now)
+          started_at: Map.get(metadata, :started_at),
+          last_codex_timestamp: Map.get(metadata, :last_codex_timestamp),
+          last_codex_message: Map.get(metadata, :last_codex_message),
+          last_codex_event: Map.get(metadata, :last_codex_event),
+          runtime_seconds: running_seconds(Map.get(metadata, :started_at), now),
+          session_inspection: Map.get(metadata, :session_inspection)
         }
       end)
 
@@ -1144,6 +1170,7 @@ defmodule SymphonyElixir.Orchestrator do
      %{
        running: running,
        retrying: retrying,
+       session_inspections: session_inspections_snapshot(state.session_inspections),
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
@@ -1241,6 +1268,29 @@ defmodule SymphonyElixir.Orchestrator do
       message: update[:payload] || update[:raw],
       timestamp: update[:timestamp]
     }
+  end
+
+  defp session_inspections_snapshot(session_inspections) when is_map(session_inspections) do
+    session_inspections
+    |> Map.values()
+    |> Enum.sort_by(
+      fn summary ->
+        case Map.get(summary, :updated_at) do
+          %DateTime{} = updated_at -> DateTime.to_unix(updated_at, :microsecond)
+          _ -> 0
+        end
+      end,
+      :desc
+    )
+  end
+
+  defp enrich_session_inspection_summary(summary, issue_id, running_entry) do
+    now = DateTime.utc_now()
+
+    summary
+    |> Map.put(:issue_id, issue_id)
+    |> Map.put(:issue_identifier, running_entry && Map.get(running_entry, :identifier))
+    |> Map.put_new(:updated_at, now)
   end
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do

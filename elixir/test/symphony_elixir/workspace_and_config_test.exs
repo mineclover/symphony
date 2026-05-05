@@ -744,6 +744,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
+    assert config.session_inspection.enabled == false
+    assert config.session_inspection.comment_on_completion == false
     assert config.codex.command == "codex app-server"
 
     assert config.codex.approval_policy == %{
@@ -845,6 +847,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       observability_enabled: "maybe",
       observability_refresh_ms: %{bad: true},
       observability_render_interval_ms: %{bad: true},
+      session_inspection_enabled: "maybe",
+      session_inspection_comment_on_completion: "maybe",
       server_port: -1,
       server_host: 123
     )

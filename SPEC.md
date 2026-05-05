@@ -587,6 +587,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
+- `session_inspection.enabled`: boolean, default `false`
+- `session_inspection.comment_on_completion`: boolean, default `false`
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
@@ -1010,6 +1012,10 @@ If implemented:
   the source session.
 - The helper SHOULD return the platform, source session identity, observer session identity,
   observer turn/session identity, collected observer events, and best-effort final summary text.
+- The helper SHOULD expose whether the observer turn reported a cache hit when the targeted
+  protocol emits cached-token usage fields.
+- The helper MAY render the inspection result as a tracker comment body and post it through the
+  configured tracker adapter.
 - Client-side dynamic tools SHOULD be disabled or explicitly constrained for observer turns unless
   the caller opts into them.
 

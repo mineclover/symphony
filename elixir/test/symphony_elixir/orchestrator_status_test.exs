@@ -101,6 +101,74 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            }
   end
 
+  test "orchestrator snapshot stores session inspection summaries" do
+    issue_id = "issue-inspection-snapshot"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-INSPECT-SNAPSHOT",
+      title: "Inspection snapshot test",
+      description: "Expose observer summaries",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-INSPECT-SNAPSHOT"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :InspectionSnapshotOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: "thread-work-turn-work",
+      turn_count: 1,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    summary = %{
+      observer: true,
+      platform: :codex_app_server,
+      source_turn_number: 1,
+      source_session: %{thread_id: "thread-work"},
+      observer_session: %{thread_id: "thread-summary"},
+      observer_turn: %{session_id: "thread-summary-turn-summary", thread_id: "thread-summary", turn_id: "turn-summary"},
+      summary_text: "outcome: observer summary",
+      cache_analysis: %{cache_hit?: true, cached_input_tokens: 90, input_tokens: 120, cache_hit_ratio: 0.75},
+      events: []
+    }
+
+    send(pid, {:session_inspection_update, issue_id, summary})
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry], session_inspections: [inspection]} = snapshot
+
+    assert snapshot_entry.session_inspection.summary_text == "outcome: observer summary"
+    assert inspection.issue_id == issue_id
+    assert inspection.issue_identifier == issue.identifier
+    assert inspection.observer == true
+    assert inspection.observer_turn.session_id == "thread-summary-turn-summary"
+    assert Map.fetch!(inspection.cache_analysis, :cache_hit?) == true
+    assert %DateTime{} = inspection.updated_at
+  end
+
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
     issue_id = "issue-usage-snapshot"
 

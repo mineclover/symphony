@@ -19,6 +19,7 @@ defmodule SymphonyElixirWeb.Presenter do
           },
           running: Enum.map(snapshot.running, &running_entry_payload/1),
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
+          session_inspections: Enum.map(Map.get(snapshot, :session_inspections, []), &session_inspection_payload/1),
           codex_totals: snapshot.codex_totals,
           rate_limits: snapshot.rate_limits
         }
@@ -108,6 +109,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      session_inspection: session_inspection_payload(Map.get(entry, :session_inspection)),
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -139,6 +141,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_event: running.last_codex_event,
       last_message: summarize_message(running.last_codex_message),
       last_event_at: iso8601(running.last_codex_timestamp),
+      session_inspection: session_inspection_payload(Map.get(running, :session_inspection)),
       tokens: %{
         input_tokens: running.codex_input_tokens,
         output_tokens: running.codex_output_tokens,
@@ -177,6 +180,45 @@ defmodule SymphonyElixirWeb.Presenter do
     ]
     |> Enum.reject(&is_nil(&1.at))
   end
+
+  defp session_inspection_payload(nil), do: nil
+
+  defp session_inspection_payload(summary) when is_map(summary) do
+    %{
+      observer: Map.get(summary, :observer),
+      platform: Map.get(summary, :platform),
+      issue_id: Map.get(summary, :issue_id),
+      issue_identifier: Map.get(summary, :issue_identifier),
+      source_turn_number: Map.get(summary, :source_turn_number),
+      source_session: Map.get(summary, :source_session),
+      observer_session: Map.get(summary, :observer_session),
+      observer_turn: observer_turn_payload(Map.get(summary, :observer_turn)),
+      summary_text: Map.get(summary, :summary_text),
+      cache_analysis: cache_analysis_payload(Map.get(summary, :cache_analysis)),
+      updated_at: iso8601(Map.get(summary, :updated_at))
+    }
+  end
+
+  defp observer_turn_payload(observer_turn) when is_map(observer_turn) do
+    %{
+      session_id: Map.get(observer_turn, :session_id),
+      thread_id: Map.get(observer_turn, :thread_id),
+      turn_id: Map.get(observer_turn, :turn_id)
+    }
+  end
+
+  defp observer_turn_payload(_observer_turn), do: nil
+
+  defp cache_analysis_payload(cache_analysis) when is_map(cache_analysis) do
+    %{
+      cache_hit?: Map.get(cache_analysis, :cache_hit?),
+      cached_input_tokens: Map.get(cache_analysis, :cached_input_tokens),
+      input_tokens: Map.get(cache_analysis, :input_tokens),
+      cache_hit_ratio: Map.get(cache_analysis, :cache_hit_ratio)
+    }
+  end
+
+  defp cache_analysis_payload(_cache_analysis), do: nil
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)

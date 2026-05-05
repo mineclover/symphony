@@ -1164,6 +1164,128 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "agent runner can inspect completed turns and post tracker comments before stopping the session" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-session-inspection-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-inspection.trace")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="#{trace_file}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-work"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-work"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":4,"result":{"thread":{"id":"thread-summary"}}}'
+            ;;
+          5)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-summary"}}}'
+            printf '%s\\n' '{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-summary","tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":90,"outputTokens":10,"totalTokens":130}}}}'
+            printf '%s\\n' '{"method":"item/completed","params":{"threadId":"thread-summary","turnId":"turn-summary","item":{"id":"item-commentary","type":"agentMessage","phase":"commentary","text":"commentary should not be posted"}}}'
+            printf '%s\\n' '{"method":"item/completed","params":{"threadId":"thread-summary","turnId":"turn-summary","item":{"id":"item-final","type":"agentMessage","phase":"final_answer","text":"outcome: inspected automatically"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        tracker_kind: "memory",
+        codex_command: "#{codex_binary} app-server",
+        session_inspection_enabled: true,
+        session_inspection_comment_on_completion: true
+      )
+
+      Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
+
+      issue = %Issue{
+        id: "issue-session-inspection",
+        identifier: "MT-INSPECT-AUTO",
+        title: "Inspect automatically",
+        description: "Create a summary comment after work",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-INSPECT-AUTO",
+        labels: []
+      }
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 self(),
+                 issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
+               )
+
+      assert_receive {:session_inspection_update, "issue-session-inspection", summary}, 1_000
+      assert summary.observer == true
+      assert summary.source_session == %{thread_id: "thread-work"}
+      assert summary.observer_session == %{thread_id: "thread-summary"}
+      assert summary.observer_turn.session_id == "thread-summary-turn-summary"
+      assert summary.summary_text == "outcome: inspected automatically"
+      assert summary.source_turn_number == 1
+      assert summary.cache_analysis.cached_input_tokens == 90
+      assert Map.fetch!(summary.cache_analysis, :cache_hit?) == true
+
+      assert_receive {:memory_tracker_comment, "issue-session-inspection", body}, 1_000
+      assert body =~ "Symphony session summary"
+      assert body =~ "Source session: thread_id=thread-work"
+      assert body =~ "Observer session: thread_id=thread-summary"
+      assert body =~ "Cache: hit cached_input_tokens=90 input_tokens=120 ratio=0.75"
+      assert body =~ "outcome: inspected automatically"
+      refute body =~ "commentary should not be posted"
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 payload = line |> String.trim_leading("JSON:") |> Jason.decode!()
+                 payload["method"] == "thread/fork" && get_in(payload, ["params", "threadId"]) == "thread-work"
+               else
+                 false
+               end
+             end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "agent runner surfaces ssh startup failures instead of silently hopping hosts" do
     test_root =
       Path.join(

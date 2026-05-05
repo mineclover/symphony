@@ -122,6 +122,8 @@ defmodule SymphonyElixir.TestSupport do
           observability_enabled: true,
           observability_refresh_ms: 1_000,
           observability_render_interval_ms: 16,
+          session_inspection_enabled: false,
+          session_inspection_comment_on_completion: false,
           server_port: nil,
           server_host: nil,
           prompt: @workflow_prompt
@@ -159,6 +161,8 @@ defmodule SymphonyElixir.TestSupport do
     observability_enabled = Keyword.get(config, :observability_enabled)
     observability_refresh_ms = Keyword.get(config, :observability_refresh_ms)
     observability_render_interval_ms = Keyword.get(config, :observability_render_interval_ms)
+    session_inspection_enabled = Keyword.get(config, :session_inspection_enabled)
+    session_inspection_comment_on_completion = Keyword.get(config, :session_inspection_comment_on_completion)
     server_port = Keyword.get(config, :server_port)
     server_host = Keyword.get(config, :server_host)
     prompt = Keyword.get(config, :prompt)
@@ -194,6 +198,7 @@ defmodule SymphonyElixir.TestSupport do
         "  stall_timeout_ms: #{yaml_value(codex_stall_timeout_ms)}",
         hooks_yaml(hook_after_create, hook_before_run, hook_after_run, hook_before_remove, hook_timeout_ms),
         observability_yaml(observability_enabled, observability_refresh_ms, observability_render_interval_ms),
+        session_inspection_yaml(session_inspection_enabled, session_inspection_comment_on_completion),
         server_yaml(server_port, server_host),
         "---",
         prompt
@@ -261,6 +266,15 @@ defmodule SymphonyElixir.TestSupport do
       "  dashboard_enabled: #{yaml_value(enabled)}",
       "  refresh_ms: #{yaml_value(refresh_ms)}",
       "  render_interval_ms: #{yaml_value(render_interval_ms)}"
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp session_inspection_yaml(enabled, comment_on_completion) do
+    [
+      "session_inspection:",
+      "  enabled: #{yaml_value(enabled)}",
+      "  comment_on_completion: #{yaml_value(comment_on_completion)}"
     ]
     |> Enum.join("\n")
   end

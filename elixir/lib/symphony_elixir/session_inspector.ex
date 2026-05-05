@@ -10,10 +10,12 @@ defmodule SymphonyElixir.SessionInspector do
   alias SymphonyElixir.Codex.SessionInspectionAdapter
 
   @type summary :: %{
+          observer: true,
           source_thread_id: String.t(),
           observer_thread_id: String.t(),
           observer_session_id: String.t(),
           summary_text: String.t() | nil,
+          cache_analysis: map(),
           events: [map()]
         }
 
@@ -23,10 +25,12 @@ defmodule SymphonyElixir.SessionInspector do
     with {:ok, inspection} <- AgentSessionInspection.summarize(SessionInspectionAdapter, app_session, issue, opts) do
       {:ok,
        %{
+         observer: true,
          source_thread_id: inspection.source_session.thread_id,
          observer_thread_id: inspection.observer_session.thread_id,
          observer_session_id: inspection.observer_turn.session_id,
          summary_text: inspection.summary_text,
+         cache_analysis: inspection.cache_analysis,
          events: inspection.events
        }}
     end

@@ -98,6 +98,9 @@ hooks:
 agent:
   max_concurrent_agents: 10
   max_turns: 20
+session_inspection:
+  enabled: false
+  comment_on_completion: false
 codex:
   command: codex app-server
 ---
@@ -162,6 +165,16 @@ thread with `thread/fork`.
 point. It runs the observer prompt only on the forked thread and returns the source thread id,
 observer thread id, observer session id, collected observer events, and best-effort final summary
 text.
+
+Inspection results include `cache_analysis`, derived from cached-token usage fields when the
+underlying agent protocol emits them. `SymphonyElixir.AgentSessionInspection.comment_body/1` renders
+the summary, source/observer session identities, and cache result into a tracker comment body, and
+`create_comment/3` posts that body through the configured tracker adapter.
+
+When `session_inspection.enabled` is true, Symphony runs the observer summary after each successful
+agent turn while the source app-server session is still alive. When
+`session_inspection.comment_on_completion` is true, it also posts the rendered summary comment to the
+issue tracker.
 
 Observer turns disable Symphony client-side dynamic tools by default. Callers can pass
 `:tool_executor` when a trusted inspection flow needs tool access.
