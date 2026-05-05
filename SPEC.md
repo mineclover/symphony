@@ -992,6 +992,31 @@ Transport handling requirements:
 - For stdio-based transports, keep protocol stream handling separate from diagnostic stderr
   handling unless the targeted protocol specifies otherwise.
 
+### 10.3.1 Agent Session Inspection and Observer Summaries
+
+Implementations MAY expose a session-inspection helper for any coding-agent CLI or platform that
+can clone, fork, resume, or otherwise instantiate an isolated observer session from cached source
+session state.
+
+If implemented:
+
+- The helper SHOULD use a platform-specific adapter for the targeted agent CLI/session protocol.
+- The helper SHOULD clone the source session using the platform's safest isolated-session primitive
+  (`thread/fork` for Codex app-server).
+- The observer session SHOULD be ephemeral unless an operator explicitly requests durable observer
+  history.
+- The helper SHOULD run the observer prompt only on the cloned observer session.
+- The helper MUST keep the source session identity unchanged and MUST NOT start the summary turn on
+  the source session.
+- The helper SHOULD return the platform, source session identity, observer session identity,
+  observer turn/session identity, collected observer events, and best-effort final summary text.
+- Client-side dynamic tools SHOULD be disabled or explicitly constrained for observer turns unless
+  the caller opts into them.
+
+The first supported observer use case is a session summary for operators. Future implementations MAY
+add more specialized observer prompts, such as work-unit classification, task counting, or
+verification-only summaries.
+
 ### 10.4 Emitted Runtime Events (Upstream to Orchestrator)
 
 The app-server client emits structured events to the orchestrator callback. Each event SHOULD

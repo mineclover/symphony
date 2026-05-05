@@ -151,6 +151,21 @@ codex:
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
 
+## Session Inspection
+
+`SymphonyElixir.AgentSessionInspection.summarize/4` provides a generic inspection flow for agent
+CLIs or platforms that can clone cached session state into an isolated observer session. The first
+adapter is `SymphonyElixir.Codex.SessionInspectionAdapter`, which forks a live Codex app-server
+thread with `thread/fork`.
+
+`SymphonyElixir.SessionInspector.summarize/3` remains as the Codex app-server convenience entry
+point. It runs the observer prompt only on the forked thread and returns the source thread id,
+observer thread id, observer session id, collected observer events, and best-effort final summary
+text.
+
+Observer turns disable Symphony client-side dynamic tools by default. Callers can pass
+`:tool_executor` when a trusted inspection flow needs tool access.
+
 ## Web dashboard
 
 The observability UI now runs on a minimal Phoenix stack:

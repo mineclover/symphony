@@ -9,6 +9,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @initialize_id 1
   @thread_start_id 2
   @turn_start_id 3
+  @thread_fork_id 4
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
@@ -135,6 +136,44 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:error, reason} ->
         Logger.error("Codex session failed for #{issue_context(issue)}: #{inspect(reason)}")
         emit_message(on_message, :startup_failed, %{reason: reason}, metadata)
+        {:error, reason}
+    end
+  end
+
+  @spec fork_session(session(), keyword()) :: {:ok, session()} | {:error, term()}
+  def fork_session(
+        %{
+          port: port,
+          approval_policy: approval_policy,
+          thread_sandbox: thread_sandbox,
+          thread_id: thread_id,
+          workspace: workspace
+        } = session,
+        opts \\ []
+      ) do
+    persist_extended_history = Keyword.get(opts, :persist_extended_history, true)
+
+    send_message(port, %{
+      "method" => "thread/fork",
+      "id" => @thread_fork_id,
+      "params" => %{
+        "threadId" => thread_id,
+        "cwd" => workspace,
+        "approvalPolicy" => approval_policy,
+        "sandbox" => thread_sandbox,
+        "ephemeral" => Keyword.get(opts, :ephemeral, true),
+        "persistExtendedHistory" => persist_extended_history
+      }
+    })
+
+    case await_response(port, @thread_fork_id) do
+      {:ok, %{"thread" => %{"id" => forked_thread_id}}} ->
+        {:ok, %{session | thread_id: forked_thread_id}}
+
+      {:ok, payload} ->
+        {:error, {:invalid_thread_fork_payload, payload}}
+
+      {:error, reason} ->
         {:error, reason}
     end
   end
